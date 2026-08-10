@@ -1,0 +1,411 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+
+import { isDemoMode } from "@/lib/env";
+import { getClients, getReports } from "@/lib/data";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { createSupabaseServerClient, getCurrentUser } from "@/lib/supabase/server";
+import { buildGroupCaption } from "@/lib/reports/payload";
+import { sendReportFromUser } from "@/lib/whatsapp/session";
+import type { Client, ReportHistory } from "@/types/database";
+
+/* =====================================================================
+   Envio manual do relatório
+   ---------------------------------------------------------------------
+   O cron prepara; uma pessoa despacha. Quem despacha manda PELO PRÓPRIO
+   WHATSAPP, então o cliente vê a mensagem vindo de um humano conhecido,
+   não de um número da agência que ninguém salvou.
+   ===================================================================== */
+
+export interface EnvioPendente {
+  report: ReportHistory;
+  client: Client;
+}
+
+/* ------------------------------------------------------------------ */
+/* Rascunho da análise, por IA                                         */
+/* ------------------------------------------------------------------ */
+
+const analiseSchema = z.object({
+  clientSlug: z.string().min(1),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+export type AnaliseResult =
+  | { ok: true; insights: string; nextSteps: string[] }
+  | { ok: false; error: string };
+
+/**
+ * Escreve um rascunho da leitura do time a partir dos números do período.
+ *
+ * Monta o MESMO payload que o PDF usa — ver `analise-ia.ts` para o
+ * porquê. A leitura passa por `getClientBySlug`, que respeita a RLS:
+ * um colaborador não gera análise de conta alheia.
+ *
+ * Devolve o erro como VALOR e não como exceção: a falha aqui é sempre
+ * algo que a pessoa precisa ler (falta a chave, o período está zerado,
+ * o modelo recusou), e uma exceção viraria um toast genérico.
+ */
+export async function gerarAnaliseIA(input: {
+  clientSlug: string;
+  periodStart: string;
+  periodEnd: string;
+}): Promise<AnaliseResult> {
+  const parsed = analiseSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Período inválido." };
+
+  const { clientSlug, periodStart, periodEnd } = parsed.data;
+  if (periodEnd < periodStart) {
+    return { ok: false, error: "O fim do período é anterior ao início." };
+  }
+
+  const { getClientBySlug, getTemplateForClient } = await import("@/lib/data");
+  const { buildReportPayload } = await import("@/lib/reports/payload");
+  const { gerarAnalise, AnaliseIndisponivel } = await import(
+    "@/lib/reports/analise-ia"
+  );
+
+  const client = await getClientBySlug(clientSlug);
+  if (!client) {
+    return { ok: false, error: "Cliente não encontrado ou sem permissão." };
+  }
+
+  const template = await getTemplateForClient(client);
+  if (!template) return { ok: false, error: "Nenhum template configurado." };
+
+  try {
+    const payload = await buildReportPayload({
+      client,
+      template,
+      periodStart,
+      periodEnd,
+    });
+
+    const { insights, nextSteps } = await gerarAnalise(payload);
+    return { ok: true, insights, nextSteps };
+  } catch (erro) {
+    if (erro instanceof AnaliseIndisponivel) {
+      return { ok: false, error: erro.message };
+    }
+    return {
+      ok: false,
+      error:
+        erro instanceof Error
+          ? `Falha ao gerar a análise: ${erro.message}`
+          : "Falha ao gerar a análise.",
+    };
+  }
+}
+
+/**
+ * Relatórios gerados e ainda não enviados.
+ *
+ * A leitura passa por `getReports`, que usa RLS: um colaborador só vê
+ * os relatórios das contas dele. A tela não filtra nada à mão.
+ */
+export async function listarPendentes(): Promise<EnvioPendente[]> {
+  const [reports, clients] = await Promise.all([getReports(), getClients()]);
+
+  return reports
+    .filter((r) => r.status === "ready" || r.status === "failed")
+    .map((report) => {
+      const client = clients.find((c) => c.id === report.client_id);
+      return client ? { report, client } : null;
+    })
+    .filter((x): x is EnvioPendente => x !== null);
+}
+
+export interface ResultadoEnvio {
+  ok: boolean;
+  error?: string;
+}
+
+export async function enviarRelatorio(
+  reportId: string,
+): Promise<ResultadoEnvio> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Sessão expirada. Entre novamente." };
+
+  if (isDemoMode) {
+    return {
+      ok: false,
+      error: "Modo demo: o envio real exige banco e WhatsApp configurados.",
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  /* A leitura passa pelo RLS: se o usuário não tem acesso à conta, o
+     relatório volta vazio e o envio nem começa. É a mesma barreira que
+     protege o resto do sistema — não há checagem paralela aqui. */
+  const { data: report } = await supabase
+    .from("report_history")
+    .select("*")
+    .eq("id", reportId)
+    .maybeSingle();
+
+  if (!report) {
+    return { ok: false, error: "Relatório não encontrado ou sem permissão." };
+  }
+
+  const linha = report as ReportHistory;
+
+  if (linha.status === "sent") {
+    return { ok: false, error: "Este relatório já foi enviado." };
+  }
+
+  if (!linha.storage_path) {
+    return { ok: false, error: "O PDF ainda não foi gerado." };
+  }
+
+  const { data: client } = await supabase
+    .from("clients")
+    .select("*")
+    .eq("id", linha.client_id)
+    .maybeSingle();
+
+  if (!client) {
+    return { ok: false, error: "Cliente não encontrado ou sem permissão." };
+  }
+
+  const destino = (client as Client).whatsapp_phone;
+  if (!destino) {
+    return { ok: false, error: "Cliente sem WhatsApp cadastrado." };
+  }
+
+  /* URL assinada NOVA, não a gravada em `public_url`.
+     Aquela foi assinada quando o PDF nasceu e vale 7 dias; um relatório
+     preparado e esquecido por duas semanas teria um link morto, e a
+     Evolution falharia ao baixar o arquivo com erro genérico. */
+  const admin = createSupabaseAdminClient();
+  const { data: assinada } = await admin.storage
+    .from("report-pdfs")
+    .createSignedUrl(linha.storage_path, 60 * 60);
+
+  if (!assinada?.signedUrl) {
+    return { ok: false, error: "Não foi possível assinar a URL do PDF." };
+  }
+
+  await supabase
+    .from("report_history")
+    .update({ status: "sending" })
+    .eq("id", reportId);
+
+  const legenda =
+    linha.snapshot && typeof linha.snapshot === "object"
+      ? buildGroupCaption(linha.snapshot as never)
+      : `Segue o relatório de performance de ${(client as Client).name}.`;
+
+  const resultado = await sendReportFromUser(
+    user.id,
+    destino,
+    assinada.signedUrl,
+    legenda,
+    (client as Client).name,
+  );
+
+  if (!resultado.success) {
+    // O `storage_path` continua intacto: dá para reenviar sem regerar.
+    await supabase
+      .from("report_history")
+      .update({ status: "failed", error_message: resultado.error })
+      .eq("id", reportId);
+
+    return { ok: false, error: resultado.error };
+  }
+
+  await supabase
+    .from("report_history")
+    .update({
+      status: "sent",
+      channel: "whatsapp",
+      recipient: destino,
+      delivered_at: new Date().toISOString(),
+      provider_message_id: resultado.messageId,
+      // Quem clicou. Sem isto não há como saber depois quem despachou.
+      generated_by: linha.generated_by ?? user.id,
+    })
+    .eq("id", reportId);
+
+  revalidatePath("/relatorios");
+  return { ok: true };
+}
+
+/* =====================================================================
+   Edição dos templates por segmento
+   ---------------------------------------------------------------------
+   Quem barra colaborador é a policy `report_templates_admin`, que exige
+   `app.is_admin()`. Não repito a checagem aqui: duas fontes de verdade
+   sobre permissão divergem, e a que envelhece é sempre a da aplicação.
+
+   ⚠️ Até a migration 30 a tabela tinha a policy mas NÃO tinha
+   `grant update` — o Postgres recusava antes de avaliar a policy, e o
+   salvamento falhava com 42501. Se voltar a dar "permissão negada" num
+   admin, é grant, não policy.
+   ===================================================================== */
+
+const templateSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(2).max(80),
+  description: z.string().trim().max(240),
+  /* Ordem importa: é a ordem dos KPIs no PDF. */
+  metrics: z.array(z.string()).min(1).max(8),
+  /* Rótulo por métrica. O mesmo `conversions` é "Vendas" na loja e
+     "Contatos" no negócio local — sem isto o cliente não reconhece o
+     próprio negócio no relatório. */
+  metricLabels: z.record(z.string(), z.string().trim().max(40)),
+});
+
+export async function salvarTemplate(input: {
+  id: string;
+  name: string;
+  description: string;
+  metrics: string[];
+  metricLabels: Record<string, string>;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const parsed = templateSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: "Confira nome, descrição e métricas." };
+  }
+
+  const { id, name, description, metrics, metricLabels } = parsed.data;
+
+  /* Rótulo em branco significa "usar o padrão da métrica", não string
+     vazia — gravar "" faria o PDF imprimir um cabeçalho sem texto. */
+  const rotulos = Object.fromEntries(
+    Object.entries(metricLabels).filter(([, v]) => v.trim().length > 0),
+  );
+
+  if (isDemoMode) return { ok: true };
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("report_templates")
+    .update({
+      name,
+      description: description || null,
+      metrics,
+      metric_labels: rotulos,
+    })
+    .eq("id", id);
+
+  if (error) {
+    if (error.code === "42501") {
+      return { ok: false, error: "Apenas administradores editam templates." };
+    }
+    return { ok: false, error: error.message };
+  }
+
+  revalidatePath("/relatorios");
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
+/* Agenda de envio — em lote, direto da tela de Relatórios             */
+/* ------------------------------------------------------------------ */
+
+const agendaSchema = z.object({
+  /* `min(1)` e NÃO `uuid()`: o formato do id é assunto do banco, que
+     recusa o que não for uuid, e a coluna já está sob RLS. Exigir uuid
+     aqui quebrava o modo demonstração inteiro — os ids de lá são
+     `c-nord` — e a tela ficava sem como mostrar o fluxo que ela existe
+     para mostrar. */
+  clientId: z.string().min(1),
+  /* `null` = sem envio recorrente. 28 é o teto pelo mesmo motivo do
+     banco e do faturamento: fevereiro existe, e dia 30 nunca chegaria. */
+  reportDay: z.number().int().min(1).max(28).nullable(),
+  enabled: z.boolean(),
+  /* Telefone OU JID de grupo (`...@g.us`). Vazio limpa o destino. */
+  whatsapp: z.string().trim().max(120),
+});
+
+/**
+ * Grava destino, dia e liga/desliga o envio de UM cliente.
+ *
+ * Existe porque isso só era editável dentro do formulário completo do
+ * cliente, um diálogo por vez — e com 47 contas o resultado foi que
+ * NENHUMA ficou configurada. Mesma razão da tabela de contratos em
+ * Recorrência: quando são dezenas de linhas vindas de uma planilha,
+ * abrir e fechar um diálogo por linha é a diferença entre a tela ser
+ * usada e não ser.
+ *
+ * Sem checagem de papel: quem barra é a policy do banco em `clients`,
+ * como nas outras ações de cadastro. Uma segunda fonte de verdade sobre
+ * permissão aqui seria a que fica desatualizada.
+ */
+export async function salvarAgendaDeRelatorio(input: {
+  clientId: string;
+  reportDay: number | null;
+  enabled: boolean;
+  whatsapp: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const parsed = agendaSchema.safeParse(input);
+  if (!parsed.success) {
+    /* A mensagem do zod em vez de uma genérica: "Dia ou destino
+       inválido" não diz QUAL dos dois, e foi exatamente o que mascarou
+       este bug — o id é que estava sendo recusado, não o dia. */
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Dados inválidos.",
+    };
+  }
+
+  const { clientId, reportDay, enabled, whatsapp } = parsed.data;
+
+  /* LIGADO SEM DIA NUNCA DISPARA. O job procura `report_day = <dia de
+     hoje>`, então um cliente marcado como ativo e sem dia fica para
+     sempre em silêncio, parecendo configurado. Recusar aqui é o que
+     impede a tela de mostrar "pronto" para quem não está. */
+  if (enabled && reportDay === null) {
+    return {
+      ok: false,
+      error: "Escolha o dia do envio antes de ligar o automático.",
+    };
+  }
+
+  if (enabled && whatsapp === "") {
+    return {
+      ok: false,
+      error: "Sem destino no WhatsApp o relatório é gerado e não sai.",
+    };
+  }
+
+  if (isDemoMode) {
+    const { demoClients } = await import("@/lib/mock/data");
+    const alvo = demoClients.find((c) => c.id === clientId);
+    if (alvo) {
+      alvo.report_day = reportDay;
+      alvo.report_enabled = enabled;
+      alvo.whatsapp_phone = whatsapp || null;
+    }
+    revalidatePath("/relatorios");
+    return { ok: true };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("clients")
+    .update({
+      report_day: reportDay,
+      report_enabled: enabled,
+      whatsapp_phone: whatsapp || null,
+    })
+    .eq("id", clientId);
+
+  if (error) {
+    return {
+      ok: false,
+      error:
+        error.code === "42501"
+          ? "O banco recusou a alteração. Fale com um administrador."
+          : error.message,
+    };
+  }
+
+  revalidatePath("/relatorios");
+  revalidatePath("/clientes");
+  return { ok: true };
+}

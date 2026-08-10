@@ -1,0 +1,14 @@
+<!-- Wordmark da Send. O símbolo foi traçado do avatar do @send.agencia,
+     não de um arquivo de marca — se existir o vetor oficial, substituir
+     este arquivo e o logo-light.svg. Amarelo #ffd400 / preto #111111. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 32" width="150" height="32" role="img" aria-label="Agência Send">
+  <rect x="0" y="2" width="28" height="28" rx="8" fill="#FFD400"/>
+  <g fill="#111111" transform="translate(14 16) scale(0.0625) translate(-256 -256)">
+    <polygon points="152,96 360,96 236,254 152,254"/>
+    <polygon points="360,258 360,416 152,416 276,258"/>
+  </g>
+  <text x="36" y="24" font-family="Inter, ui-sans-serif, system-ui, sans-serif"
+        font-size="18" font-weight="700" letter-spacing="-0.6" fill="#F6F5F2">send</text>
+  <text x="79" y="24" font-family="Inter, ui-sans-serif, system-ui, sans-serif"
+        font-size="10" font-weight="500" letter-spacing="2" fill="#FFD400">agência</text>
+</svg>

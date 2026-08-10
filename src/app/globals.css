@@ -1,0 +1,423 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* =====================================================================
+   SEND HUB — Design tokens
+   ---------------------------------------------------------------------
+   A marca da Send é DUAS cores: amarelo e preto.
+
+     #ffd400  amarelo da marca         #111111  preto da marca
+     #8a6100  âmbar profundo           #f6f5f2  texto no escuro
+     #0a0a0a  sidebar (um tom abaixo)  #141413  tinta no claro
+                                       raio dos botões: 12px
+
+   ⚠️ O #ffd400 foi lido do avatar do @send.agencia, não de um arquivo
+   de marca. Se existir o vetor oficial, conferir o hex — é a única
+   variável daqui que depende de fonte externa.
+
+   Decisões que sustentam o visual:
+
+   1. O AMARELO É PREENCHIMENTO, NUNCA TEXTO. `--primary` é o mesmo
+      #ffd400 nos dois temas, sempre com o preto por cima (13:1) — é
+      literalmente o avatar da agência. Isso só funciona porque ele
+      aparece como FUNDO. Amarelo como tinta sobre branco dá 1.5:1 e
+      some; onde a marca precisa virar texto ou ícone no tema claro,
+      entra o `--signal` (âmbar #8a6100, 5.3:1), que é o mesmo matiz
+      escurecido. No escuro esse papel volta para o amarelo puro.
+
+   2. NEUTROS SEM MATIZ. A base é cinza de croma ~0.004, não navy. Com
+      dois cromas fortes (amarelo e preto) qualquer tinta no cinza
+      brigaria com o amarelo — o fundo #111111 e o papel #fafaf8 deixam
+      a marca ser a única cor saturada da tela.
+
+   3. TOKENS EM OKLCH, não HSL. Em HSL, "50% de luminosidade" tem brilho
+      percebido muito diferente entre um azul e um verde, então derivar
+      hover, muted e estados a partir da cor base vira tentativa e erro.
+      OKLCH é perceptualmente uniforme: os degraus de superfície acima
+      são espaçamentos reais de luminosidade. É também o formato que o
+      shadcn passou a usar, e o que `color-mix(in oklab, …)` — usado em
+      vários pontos deste arquivo — espera.
+
+   4. SEMÂNTICA DE DADO SEPARADA DA MARCA. `--positive` / `--negative` /
+      `--warning` não são amarelos: em CPA, cair é bom, e essa leitura
+      não pode depender da cor institucional. O `--warning` foi puxado
+      para laranja (matiz ~52) justamente porque o âmbar antigo, no
+      matiz 65-78, viraria "cor da marca" e perderia o susto. Pelo mesmo
+      motivo nenhuma série de gráfico além da `chart-1` fica no amarelo.
+   ===================================================================== */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Marca e semântica de dado */
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-signal-muted: var(--signal-muted);
+  --color-positive: var(--positive);
+  --color-positive-muted: var(--positive-muted);
+  --color-negative: var(--negative);
+  --color-negative-muted: var(--negative-muted);
+  --color-warning: var(--warning);
+  --color-warning-muted: var(--warning-muted);
+
+  /* Superfícies elevadas do shell */
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-hairline: var(--hairline);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-heading: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 10px);
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-2xs--letter-spacing: 0.06em;
+}
+
+/* ------------------------------- CLARO -------------------------------
+   Papel #fafaf8, tinta #141413, amarelo da marca como preenchimento.
+   O que precisa ser marca EM TEXTO usa o `--signal` âmbar. */
+:root {
+  /* 12px — o mesmo raio dos botões do site. */
+  --radius: 0.75rem;
+
+  --background: oklch(0.9845 0.0026 106.4);
+  --foreground: oklch(0.1908 0.0020 106.6);
+
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.9633 0.0040 106.5);
+  --hairline: oklch(0.9152 0.0068 97.4);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.1908 0.0020 106.6);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.1908 0.0020 106.6);
+
+  /* #ffd400 com #111111 por cima — o avatar da agência, literal. */
+  --primary: oklch(0.8809 0.1806 94.0);
+  --primary-foreground: oklch(0.1776 0 89.9);
+
+  --secondary: oklch(0.9518 0.0054 95.1);
+  --secondary-foreground: oklch(0.2400 0.0030 100);
+  --muted: oklch(0.9518 0.0054 95.1);
+  --muted-foreground: oklch(0.5233 0.0093 99.0);
+  --accent: oklch(0.9529 0.0581 95.6);
+  --accent-foreground: oklch(0.2200 0.0040 100);
+
+  --destructive: oklch(0.5750 0.2100 27);
+  --border: oklch(0.9152 0.0068 97.4);
+  --input: oklch(0.8721 0.0082 98.9);
+  --ring: oklch(0.6610 0.1356 84.3);
+
+  /* #8a6100 — o amarelo escurecido até virar texto legível (5.3:1).
+     É a marca onde ela não pode ser preenchimento. */
+  --signal: oklch(0.5221 0.1082 79.7);
+  --signal-foreground: oklch(0.9845 0.0026 106.4);
+  --signal-muted: oklch(0.9599 0.0480 94.3);
+
+  --positive: oklch(0.5300 0.1400 155);
+  --positive-muted: oklch(0.9420 0.0480 155);
+  --negative: oklch(0.5600 0.2000 25);
+  --negative-muted: oklch(0.9540 0.0330 25);
+  /* Laranja, não âmbar: no matiz antigo virava cor da marca. */
+  --warning: oklch(0.6100 0.1750 52);
+  --warning-muted: oklch(0.9520 0.0620 62);
+
+  /* chart-1 é a marca (no claro, o âmbar); as demais fogem do matiz do
+     amarelo para não virarem variação da mesma cor no mesmo gráfico. */
+  --chart-1: oklch(0.6200 0.1400 82);
+  --chart-2: oklch(0.5800 0.1150 215);
+  --chart-3: oklch(0.6100 0.1450 300);
+  --chart-4: oklch(0.6000 0.1500 345);
+  --chart-5: oklch(0.5900 0.1000 185);
+
+  --sidebar: oklch(0.9633 0.0040 106.5);
+  --sidebar-foreground: oklch(0.2600 0.0040 100);
+  --sidebar-primary: oklch(0.8809 0.1806 94.0);
+  --sidebar-primary-foreground: oklch(0.1776 0 89.9);
+  --sidebar-accent: oklch(0.9350 0.0110 98);
+  --sidebar-accent-foreground: oklch(0.1908 0.0020 106.6);
+  --sidebar-border: oklch(0.9152 0.0068 97.4);
+  --sidebar-ring: oklch(0.6610 0.1356 84.3);
+}
+
+/* ------------------------------- ESCURO ------------------------------
+   O preto da marca vira o produto: cinzas neutros subindo em degraus de
+   luminosidade reais, e o amarelo puro como primária e como sinal. */
+.dark {
+  /* Degraus calibrados por hex-alvo, não por chute em L:
+       #111111 fundo   #191918 card   #232322 elevado   #333331 hairline
+     A sidebar (#0a0a0a) fica um degrau ABAIXO do conteúdo — é o que
+     separa navegação de área de trabalho sem precisar de borda grossa. */
+  --background: oklch(0.1776 0 89.9);
+  --foreground: oklch(0.9701 0.0041 91.4);
+
+  --surface: oklch(0.2130 0.0019 106.6);
+  --surface-2: oklch(0.2558 0.0018 106.5);
+  --hairline: oklch(0.3204 0.0035 106.6);
+
+  --card: oklch(0.2130 0.0019 106.6);
+  --card-foreground: oklch(0.9701 0.0041 91.4);
+  --popover: oklch(0.2400 0.0020 106.5);
+  --popover-foreground: oklch(0.9701 0.0041 91.4);
+
+  /* #ffd400 sobre #111111 — o avatar da agência, na íntegra. */
+  --primary: oklch(0.8809 0.1806 94.0);
+  --primary-foreground: oklch(0.1776 0 89.9);
+
+  --secondary: oklch(0.2761 0.0036 106.6);
+  --secondary-foreground: oklch(0.9600 0.0040 95);
+  --muted: oklch(0.2761 0.0036 106.6);
+  --muted-foreground: oklch(0.7248 0.0102 93.6);
+  --accent: oklch(0.3051 0.0055 91.6);
+  --accent-foreground: oklch(0.9701 0.0041 91.4);
+
+  --destructive: oklch(0.6450 0.2000 25);
+  --border: oklch(0.3204 0.0035 106.6);
+  --input: oklch(0.3590 0.0051 106.7);
+  --ring: oklch(0.8809 0.1806 94.0);
+
+  /* No escuro o amarelo puro já é legível como tinta (13:1). */
+  --signal: oklch(0.8809 0.1806 94.0);
+  --signal-foreground: oklch(0.1776 0 89.9);
+  --signal-muted: oklch(0.3178 0.0505 95.7);
+
+  --positive: oklch(0.8000 0.1550 155);
+  --positive-muted: oklch(0.3350 0.0650 158);
+  --negative: oklch(0.7000 0.1800 22);
+  --negative-muted: oklch(0.3400 0.0820 24);
+  /* Laranja, não âmbar: o matiz antigo colidia com a marca. */
+  --warning: oklch(0.7550 0.1600 52);
+  --warning-muted: oklch(0.3450 0.0800 50);
+
+  --chart-1: oklch(0.8809 0.1806 94.0);
+  --chart-2: oklch(0.7300 0.1100 215);
+  --chart-3: oklch(0.7200 0.1350 305);
+  --chart-4: oklch(0.7100 0.1550 345);
+  --chart-5: oklch(0.7600 0.0950 185);
+
+  --sidebar: oklch(0.1448 0 89.9);
+  --sidebar-foreground: oklch(0.8850 0.0060 95);
+  --sidebar-primary: oklch(0.8809 0.1806 94.0);
+  --sidebar-primary-foreground: oklch(0.1776 0 89.9);
+  --sidebar-accent: oklch(0.2761 0.0036 106.6);
+  --sidebar-accent-foreground: oklch(0.9701 0.0041 91.4);
+  --sidebar-border: oklch(0.2900 0.0035 106.6);
+  --sidebar-ring: oklch(0.8809 0.1806 94.0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/40;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv11", "ss01";
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Números de KPI precisam de largura fixa: sem isso, um valor que muda
+     em tempo real faz o layout "dançar" a cada tick do Realtime. */
+  .tnum,
+  [data-slot="metric-value"] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum", "cv11";
+  }
+
+  ::selection {
+    background: var(--signal-muted);
+    color: var(--foreground);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--muted-foreground) 26%, transparent);
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--muted-foreground) 44%, transparent);
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* Rótulo de seção: caixa alta curta e tracking aberto. É o detalhe
+     tipográfico que separa "painel de agência" de "CRUD com Tailwind". */
+  .eyebrow {
+    @apply text-2xs font-medium uppercase tracking-[0.14em] text-muted-foreground;
+  }
+
+  /* Superfície padrão de card.
+     Profundidade em duas camadas, porque cada tema precisa de uma:
+     no CLARO a sombra faz o trabalho (ring sozinho fica chapado sobre
+     papel); no ESCURO a sombra some contra o navy e quem separa é o
+     ring de 1px. Manter as duas deixa o card correto nos dois. */
+  .surface-card {
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--foreground) 3%, transparent) 0%,
+        transparent 42%
+      ),
+      var(--card);
+    @apply rounded-xl shadow-sm ring-1 ring-hairline transition-shadow;
+  }
+
+  .surface-card:hover {
+    @apply shadow-md;
+  }
+
+  /* Títulos de página. O site usa peso 900 nos headlines; aqui o
+     equivalente sem virar grito é bold com tracking fechado — em
+     tamanho de interface, 900 com tracking normal fica pastoso. */
+  .heading-display {
+    @apply font-bold tracking-[-0.03em];
+  }
+
+  /* Brilho sutil atrás do hero de performance. */
+  .glow-signal::before {
+    content: "";
+    position: absolute;
+    inset: -40% 30% 60% -10%;
+    background: radial-gradient(
+      60% 60% at 30% 50%,
+      color-mix(in oklab, var(--signal) 16%, transparent) 0%,
+      transparent 70%
+    );
+    filter: blur(48px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Entrada escalonada dos cards.
+     Duas decisões deliberadas, ambas sobre não esconder dado:
+
+     1. CSS, não JS. Card cujo estado inicial depende de hidratação para
+        aparecer some se o JS falhar ou demorar — e o número é o conteúdo
+        da página.
+
+     2. Anima SÓ o deslocamento; a opacidade fica em 1 o tempo todo.
+        Navegador limita animação em aba em segundo plano: com opacity no
+        keyframe e `fill-mode: both`, o relógio congela em 0 e o KPI fica
+        invisível até a aba voltar ao foco. Movimento é enfeite; o valor
+        nunca pode depender dele.
+
+     O `prefers-reduced-motion` no fim do arquivo neutraliza tudo isso. */
+  @keyframes rise-in {
+    from {
+      transform: translateY(10px);
+    }
+  }
+
+  .rise-in {
+    animation: rise-in 0.44s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: var(--rise-delay, 0ms);
+  }
+
+  .grid-hairline {
+    background-image:
+      linear-gradient(to right, var(--hairline) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--hairline) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(120% 80% at 50% 0%, #000 10%, transparent 70%);
+  }
+}
+
+/* ---------------------------------------------------------------------
+   React Flow — canvas do SendChat
+
+   A folha do @xyflow traz paleta própria, pensada para tema claro. Sem
+   estas linhas o canvas fica com pontilhado cinza-claro e controles
+   brancos sobre o fundo escuro do painel — parece um iframe de outro
+   produto colado no meio da tela.
+
+   São VARIÁVEIS da própria biblioteca, e não seletores de classe: a
+   `.react-flow__controls-button` do @xyflow pode mudar de nome em uma
+   minor, as variáveis são a API pública de tema. Ligadas aos tokens do
+   Send Hub, então acompanham claro e escuro sozinhas.
+   ------------------------------------------------------------------ */
+
+.sendchat-canvas .react-flow {
+  --xy-background-color: var(--background);
+  --xy-edge-stroke: var(--muted-foreground);
+  --xy-edge-stroke-selected: var(--signal);
+  --xy-connectionline-stroke: var(--signal);
+  --xy-attribution-background-color: transparent;
+
+  --xy-controls-button-background-color: var(--surface);
+  --xy-controls-button-background-color-hover: var(--surface-2);
+  --xy-controls-button-color: var(--muted-foreground);
+  --xy-controls-button-color-hover: var(--foreground);
+  --xy-controls-button-border-color: var(--hairline);
+}
+
+/* O pontilhado do fundo. `--xy-background-pattern-dots-color` só existe
+   a partir da v12; o seletor direto é a rede de segurança. */
+.sendchat-canvas .react-flow__background-pattern {
+  color: var(--hairline);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
