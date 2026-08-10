@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { OAuthReturnToast } from "@/components/layout/oauth-return-toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { getCurrentUser } from "@/lib/supabase/server";
+import { getAccessState } from "@/lib/supabase/server";
 import { getClients } from "@/lib/data";
 import { isDemoMode } from "@/lib/env";
 
@@ -21,11 +21,22 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const user = await getCurrentUser();
+  const acesso = await getAccessState();
 
   // Rede de segurança: o proxy já teria redirecionado, mas uma sessão
   // pode expirar entre o proxy e a renderização.
-  if (!user) redirect("/login");
+  if (acesso.status === "anonimo") redirect("/login");
+
+  /* NÃO mandar para /login aqui. A sessão é válida — só o perfil que
+     não serve — e o proxy devolve toda sessão válida que chega em
+     /login de volta para cá. Os dois juntos formavam um loop de
+     redirect sem saída pela interface. `/sem-acesso` é a única rota que
+     escapa das duas regras e oferece um logout. */
+  if (acesso.status === "negado") {
+    redirect(`/sem-acesso?motivo=${acesso.motivo}`);
+  }
+
+  const user = acesso.profile;
 
   const clients = await getClients();
 

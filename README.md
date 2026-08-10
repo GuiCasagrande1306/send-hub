@@ -32,12 +32,30 @@ npx supabase link --project-ref <ref-do-projeto>
 npx supabase db push
 ```
 
-`db push` aplica as três migrations na ordem do timestamp do nome. Depois,
-para provar que o isolamento entre colaboradores funciona (sem saída = passou):
+`db push` aplica as migrations de `supabase/migrations/` na ordem do timestamp
+do nome, e **a ordem é obrigatória**: a 09 esvazia e recria `report_templates` e
+troca o enum `client_segment`; as 10, 15 e 18 reescrevem policies criadas na 02;
+a 24 substitui a 02 de novo. Nenhum arquivo ali é histórico ou opcional.
 
-```bash
-psql "$DATABASE_URL" -f supabase/tests/rls.sql
-```
+> `supabase/tests/rls.sql` está DESATUALIZADO e não deve ser usado como prova de
+> nada hoje: ele insere UUIDs direto em `public.profiles` que não existem em
+> `auth.users` (a FK aborta na primeira linha) e suas asserções descrevem as
+> regras anteriores às migrations 10, 15 e 18.
+
+#### Antes de tudo: desligar o cadastro público
+
+Faça isto **antes** do `db push`, não depois. `app.handle_new_user()` dá
+`role='admin'` à primeira linha de `auth.users`, e o trigger roda em qualquer
+insert — inclusive o do endpoint público `POST /auth/v1/signup`, que nasce
+habilitado e é alcançável com a chave anon, que vai no bundle do browser.
+Enquanto `profiles` estiver vazia, quem chamar aquele endpoint primeiro leva o
+admin da agência.
+
+> Supabase → **Authentication → Sign In / Providers → Email** → desligar
+> **"Allow new users to sign up"**.
+
+Todo membro entra por Authentication → Users → Add user. Não há tela de cadastro
+no produto, então desligar o signup não tira função nenhuma.
 
 #### Criando o primeiro usuário (obrigatório — não há tela de cadastro)
 

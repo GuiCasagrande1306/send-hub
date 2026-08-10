@@ -47,6 +47,12 @@ export async function proxy(request: NextRequest) {
   const isPublicRoute =
     pathname.startsWith("/login") ||
     pathname.startsWith("/auth") ||
+    /* Saída para sessão válida sem perfil utilizável. Precisa ser
+       pública nos DOIS sentidos: quem chega sem sessão (cookie já
+       limpo) não pode ser mandado para /login em looping, e quem chega
+       COM sessão não pode ser mandado para a raiz — que é justamente de
+       onde o layout o expulsou. */
+    pathname === "/sem-acesso" ||
     // O service worker busca /offline durante o install para guardá-la
     // na casca. Com redirect ligado, ele cacheria a TELA DE LOGIN sob a
     // chave /offline e a mostraria toda vez que a rede caísse.

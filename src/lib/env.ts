@@ -85,17 +85,24 @@ export const serverEnv = {
   whatsappProvider: (process.env.WHATSAPP_PROVIDER ?? "cloud_api") as
     | "cloud_api"
     | "evolution",
+  /* `||` e NÃO `??` nesta cadeia de precedência. O `.env.example` traz
+     todas as chaves declaradas e vazias, e quem copia o arquivo e
+     preenche só o que usa fica com `EVOLUTION_API_KEY=""` no ambiente.
+     String vazia não é null nem undefined, então `??` a aceitava como
+     valor bom e o `WHATSAPP_TOKEN` preenchido logo abaixo nunca era
+     lido — WhatsApp oficial saía sem token, sem erro de configuração,
+     só uma recusa genérica da Meta na hora do envio. */
   whatsappToken:
-    process.env.EVOLUTION_API_KEY ?? process.env.WHATSAPP_TOKEN ?? "",
+    process.env.EVOLUTION_API_KEY || process.env.WHATSAPP_TOKEN || "",
   whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? "",
   // Evolution API. Os nomes EVOLUTION_* têm precedência; os
   // WHATSAPP_EVOLUTION_* seguem aceitos para não quebrar quem já
   // configurou antes de o serviço de grupos existir.
   whatsappEvolutionUrl:
-    process.env.EVOLUTION_API_URL ?? process.env.WHATSAPP_EVOLUTION_URL ?? "",
+    process.env.EVOLUTION_API_URL || process.env.WHATSAPP_EVOLUTION_URL || "",
   whatsappEvolutionInstance:
-    process.env.EVOLUTION_INSTANCE_NAME ??
-    process.env.WHATSAPP_EVOLUTION_INSTANCE ??
+    process.env.EVOLUTION_INSTANCE_NAME ||
+    process.env.WHATSAPP_EVOLUTION_INSTANCE ||
     "",
   /**
    * Formato do corpo de `sendMedia`, que mudou entre as versões.

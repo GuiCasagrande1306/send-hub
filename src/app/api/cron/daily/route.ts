@@ -101,7 +101,20 @@ export async function GET(request: NextRequest) {
   if (rodar("sync")) {
     // `mode=month` porque a rodada diária também precisa capturar
     // reatribuições retroativas das plataformas.
-    resposta.sync = await syncAllClients({ mode: "month" });
+    /* try/catch pelo mesmo motivo da etapa 0, que já tinha o dele: as
+       três etapas são independentes DE PROPÓSITO, e sem esta guarda a
+       independência era só uma intenção no comentário. Uma exceção aqui
+       — token do Meta expirado, `SUPABASE_SERVICE_ROLE_KEY` ausente,
+       Google fora do ar — subia pela rota inteira e o relatório do
+       cliente, que é a etapa 2 e não depende de sync nenhum, deixava de
+       sair no dia. */
+    try {
+      resposta.sync = await syncAllClients({ mode: "month" });
+    } catch (error) {
+      resposta.sync = {
+        erro: error instanceof Error ? error.message : "falha desconhecida",
+      };
+    }
   }
 
   /* --- 2. Preparo dos PDFs -------------------------------------------------- */
@@ -117,14 +130,20 @@ export async function GET(request: NextRequest) {
     // sem esperar a carteira crescer para descobrir na prática.
     const orcamento = Number(searchParams.get("orcamentoMs"));
 
-    resposta.relatorios = await dispatchScheduledReports({
-      budgetMs:
-        Number.isFinite(orcamento) && orcamento > 0
-          ? Math.min(Math.max(orcamento, 10_000), 280_000)
-          : ORCAMENTO_ENVIO_MS,
-      diaForcado:
-        Number.isInteger(dia) && dia >= 1 && dia <= 28 ? dia : undefined,
-    });
+    try {
+      resposta.relatorios = await dispatchScheduledReports({
+        budgetMs:
+          Number.isFinite(orcamento) && orcamento > 0
+            ? Math.min(Math.max(orcamento, 10_000), 280_000)
+            : ORCAMENTO_ENVIO_MS,
+        diaForcado:
+          Number.isInteger(dia) && dia >= 1 && dia <= 28 ? dia : undefined,
+      });
+    } catch (error) {
+      resposta.relatorios = {
+        erro: error instanceof Error ? error.message : "falha desconhecida",
+      };
+    }
   }
 
   // 200 mesmo com falhas parciais, pelo mesmo motivo de `sync-ads`: o
