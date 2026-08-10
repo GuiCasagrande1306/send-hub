@@ -1,27 +1,31 @@
 /* =====================================================================
    URL dos filtros da carteira
    ---------------------------------------------------------------------
-   Mês e agência convivem na mesma URL. Cada seletor montando a própria
-   querystring apagaria o outro — trocar o mês limparia a agência, e o
-   usuário veria a carteira inteira sem entender por quê.
+   Sobrou um único filtro que vive na URL — o mês —, mas o construtor
+   continua existindo por um motivo: ele é quem decide que o mês
+   CORRENTE não aparece na querystring. Sem isso, `/clientes` e
+   `/clientes?month=2026-08` seriam duas URLs para a mesma tela, com dois
+   caches e dois históricos de navegação.
 
-   Um construtor só, que sempre recebe o estado completo.
+   Havia aqui também o filtro de agência, removido quando ficou claro
+   que a Send não terceiriza: com uma agência só, o seletor pedia uma
+   escolha que nunca mudava o resultado. Se um dia entrar terceirização,
+   o parâmetro volta a este mesmo lugar, e o ponto de sempre receber o
+   estado completo continua valendo — cada seletor montando a própria
+   querystring apagaria o do vizinho.
    ===================================================================== */
 
 export function buildClientsUrl({
   month,
-  agency,
   currentMonth,
 }: {
   month: string;
-  agency: string;
   /** Mês corrente: omitido da URL para o link limpo ser o padrão. */
   currentMonth: string;
 }): string {
   const params = new URLSearchParams();
 
   if (month && month !== currentMonth) params.set("month", month);
-  if (agency) params.set("agency", agency);
 
   const qs = params.toString();
   return qs ? `/clientes?${qs}` : "/clientes";

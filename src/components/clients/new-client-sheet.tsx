@@ -11,7 +11,6 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { defaultGoalMetricFor } from "@/lib/metrics/goal-metric";
 import { cn } from "@/lib/utils";
 import {
-  AGENCY_PARTNERS,
   CLIENT_SEGMENTS,
   CREATABLE_STATUSES,
   SEGMENT_LABELS,
@@ -335,43 +334,13 @@ export function NewClientSheet() {
                     )}
                   />
 
-                  <FormField
-                    control={form.control}
-                    name="agencyPartner"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Agência parceira *</FormLabel>
-                        <Select
-                          value={field.value}
-                          onValueChange={(value) =>
-                            field.onChange(value ?? "Agência Send")
-                          }
-                        >
-                          <FormControl
-                            render={
-                              <SelectTrigger className="w-full">
-                                <SelectValue>
-                                  {(value: string) => value || "Selecione"}
-                                </SelectValue>
-                              </SelectTrigger>
-                            }
-                          />
-                          <SelectContent>
-                            {AGENCY_PARTNERS.map((a) => (
-                              <SelectItem key={a} value={a}>
-                                {a}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormDescription>
-                          Quem detém o contrato. Terceirização entra com o
-                          nome da parceira.
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  {/* Sem seletor de agência: a Send não terceiriza, então
+                      todo cliente é conta própria e o campo só pedia uma
+                      resposta que nunca varia. O valor continua sendo
+                      gravado — o default `AGENCIA_PROPRIA` do schema — e o
+                      motor de recorrência segue funcionando como está.
+                      Se um dia entrar terceirização, é reintroduzir este
+                      bloco e acrescentar as parceiras a AGENCY_PARTNERS. */}
 
                   <FormField
                     control={form.control}
@@ -662,59 +631,12 @@ export function NewClientSheet() {
                 />
               </div>
 
-              {/* ============ INTEGRAÇÕES ============ */}
-              <Separator className="my-7" />
-              <SectionTitle
-                title="Integrações"
-                hint="Opcional. Sem elas o cliente é cadastrado, mas o sync não traz métricas."
-              />
-
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <FormField
-                  control={form.control}
-                  name="metaAccountId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>ID da conta Meta Ads</FormLabel>
-                      <FormControl
-                        render={
-                          <Input
-                            placeholder="act_123456789"
-                            className="font-mono text-xs"
-                          />
-                        }
-                        {...field}
-                      />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="googleCustomerId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>ID do cliente Google Ads</FormLabel>
-                      <FormControl
-                        render={
-                          <Input
-                            placeholder="123-456-7890"
-                            className="font-mono text-xs"
-                          />
-                        }
-                        {...field}
-                      />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                Os tokens de acesso são configurados à parte, em
-                Configurações — eles nunca passam por este formulário.
-              </p>
+              {/* IDs de conta de anúncio NÃO entram aqui. Eles vivem na
+                  página do cliente, em Integrações, junto do botão que
+                  autoriza o token — que é o passo que realmente liga a
+                  conta. Pedir o id no cadastro criava um campo que
+                  parecia ligar a integração e não ligava: sem token, o
+                  sync ignora o cliente do mesmo jeito. */}
             </div>
 
             {/* ============ RODAPÉ ============ */}

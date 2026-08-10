@@ -25,14 +25,7 @@ import { buildClientsUrl } from "./filter-url";
    fechamento de julho" vira um link, não uma instrução.
    ===================================================================== */
 
-export function MonthFilter({
-  value,
-  agency,
-}: {
-  value: string;
-  /** Preservada na troca de mês — ver `filter-url.ts`. */
-  agency: string;
-}) {
+export function MonthFilter({ value }: { value: string }) {
   const router = useRouter();
   const [carregando, startTransition] = useTransition();
 
@@ -46,11 +39,7 @@ export function MonthFilter({
       // `scroll: false`: trocar de mês não é navegar para outra tela, e
       // ser jogado para o topo perde a linha que a pessoa estava lendo.
       router.push(
-        buildClientsUrl({
-          month: novo,
-          agency,
-          currentMonth: meses[0].value,
-        }),
+        buildClientsUrl({ month: novo, currentMonth: meses[0].value }),
         { scroll: false },
       );
     });

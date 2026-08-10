@@ -7,7 +7,6 @@ import { Radio, Search, SlidersHorizontal } from "lucide-react";
 
 import { ClientCard } from "./client-card";
 import { MonthFilter } from "./month-filter";
-import { AgencyFilter } from "./agency-filter";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -75,13 +74,10 @@ const STATUS_LABELS: Record<Client["status"], string> = {
 export function ClientsDirectory({
   rows,
   month,
-  agency,
 }: {
   rows: DirectoryRow[];
   /** Mês exibido, "YYYY-MM". Vem da URL, resolvido no servidor. */
   month: string;
-  /** Agência filtrada, "" = todas. Também da URL. */
-  agency: string;
 }) {
   const router = useRouter();
 
@@ -205,12 +201,7 @@ export function ClientsDirectory({
 
         {/* Mês primeiro: ele muda de onde os NÚMEROS vêm, enquanto
             status e nicho só escondem linhas da mesma carteira. */}
-        <MonthFilter value={month} agency={agency} />
-
-        {/* Junto do mês porque os dois vivem na URL e recarregam do
-            servidor — status e nicho apenas escondem linhas já
-            carregadas. */}
-        <AgencyFilter value={agency} month={month} />
+        <MonthFilter value={month} />
 
         <Select
           value={statusFilter}

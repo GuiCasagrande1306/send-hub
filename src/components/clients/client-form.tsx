@@ -295,35 +295,10 @@ export function ClientForm({
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="agencyPartner"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Agência responsável</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={(v) => v && field.onChange(v)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue>{(v: string) => v}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {AGENCY_PARTNERS.map((a) => (
-                          <SelectItem key={a} value={a}>
-                            {a}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>
-                      &quot;Agência Send&quot; é conta própria; as demais são
-                      terceirização.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {/* Sem seletor de agência — a Send não terceiriza. O campo
+                  continua no schema com o default de conta própria, e o
+                  formulário reenvia o valor que já estava gravado, então
+                  editar um cliente não muda o que o financeiro lê. */}
 
               <FormField
                 control={form.control}
