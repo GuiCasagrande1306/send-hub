@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { PageContainer, PageHeader } from "@/components/layout/page-header";
 import { TeamTable } from "@/components/settings/team-table";
-import { getTeam } from "@/lib/data";
+import { getTeamAll } from "@/lib/data";
 import { getCurrentUser } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Equipe" };
@@ -28,7 +28,11 @@ export default async function TeamPage() {
   if (!user) redirect("/login");
   if (user.role !== "admin") notFound();
 
-  const team = await getTeam();
+  /* `getTeamAll` e não `getTeam`: aquele esconde inativos porque
+     alimenta seletor de responsável, e é justamente o inativo — quem se
+     cadastrou e espera liberação — que precisa aparecer aqui. */
+  const team = await getTeamAll();
+  const pendentes = team.filter((p) => !p.is_active).length;
 
   return (
     <PageContainer>
@@ -36,6 +40,22 @@ export default async function TeamPage() {
         title="Equipe"
         description="Quem tem acesso ao Send Hub e em qual nível."
       />
+
+      {pendentes > 0 && (
+        <div className="mt-6 rounded-xl border border-signal/40 bg-signal-muted/40 p-4">
+          <p className="text-sm font-medium">
+            {pendentes === 1
+              ? "1 pessoa aguardando liberação"
+              : `${pendentes} pessoas aguardando liberação`}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Quem se cadastra pela tela de login entra sem acesso a dado nenhum
+            até alguém liberar aqui. Confirme que você reconhece o e-mail antes
+            de aprovar — a partir daí a pessoa enxerga a carteira inteira,
+            métricas e tarefas.
+          </p>
+        </div>
+      )}
 
       <div className="mt-6 rounded-xl border border-hairline bg-surface-2/50 p-4">
         <p className="text-sm font-medium">O que cada nível enxerga</p>

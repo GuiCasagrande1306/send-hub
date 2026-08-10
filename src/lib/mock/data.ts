@@ -81,7 +81,7 @@ export const demoProfiles: Profile[] = [
     email: "lucas@sendagencia.com.br",
     full_name: "Lucas Prado",
     avatar_url: null,
-    job_title: "Gestora de Tráfego",
+    job_title: "Gestor de Tráfego",
     role: "collaborator",
     is_active: true,
     created_at: daysAgo(220),
@@ -105,6 +105,20 @@ export const demoProfiles: Profile[] = [
     role: "collaborator",
     is_active: true,
     created_at: daysAgo(90),
+  },
+  /* Cadastrou-se pela tela de login e ainda não foi liberado. É um
+     estado REAL do produto desde que o cadastro abriu, e sem alguém
+     nele o demo não mostra a fila de aprovação nem o destaque da
+     linha pendente em Configurações → Equipe. */
+  {
+    id: "u-pendente",
+    email: "novo.membro@sendagencia.com.br",
+    full_name: "Helena Braga",
+    avatar_url: null,
+    job_title: null,
+    role: "collaborator",
+    is_active: false,
+    created_at: daysAgo(0),
   },
 ];
 

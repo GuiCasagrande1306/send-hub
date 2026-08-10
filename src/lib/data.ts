@@ -501,7 +501,10 @@ export async function getTasks(options?: {
 export async function getTeam(): Promise<Profile[]> {
   if (isDemoMode) {
     const { demoProfiles } = await import("@/lib/mock/data");
-    return demoProfiles;
+    /* O mesmo filtro do ramo real. Sem ele o demo oferecia quem está
+       aguardando liberação no seletor de responsável por tarefa — um
+       comportamento que a produção não tem. */
+    return demoProfiles.filter((p) => p.is_active);
   }
 
   const supabase = await createSupabaseServerClient();
@@ -509,6 +512,40 @@ export async function getTeam(): Promise<Profile[]> {
     .from("profiles")
     .select("*")
     .eq("is_active", true)
+    .order("full_name");
+
+  return (data ?? []) as Profile[];
+}
+
+/**
+ * Equipe INCLUINDO quem está inativo — só para a tela de Configurações.
+ *
+ * `getTeam` filtra `is_active` porque alimenta seletor de responsável:
+ * ninguém deve conseguir atribuir tarefa a quem foi desligado. Mas com
+ * cadastro aberto, o inativo virou também "quem está esperando
+ * liberação", e com aquele filtro a fila era invisível justamente para
+ * quem tem o poder de aprová-la.
+ *
+ * Os pendentes vêm primeiro: são a única linha desta tela que pede uma
+ * decisão, e enterrá-los na ordem alfabética faria a pessoa descobrir
+ * que alguém esperava dias depois.
+ */
+export async function getTeamAll(): Promise<Profile[]> {
+  if (isDemoMode) {
+    const { demoProfiles } = await import("@/lib/mock/data");
+    // Mesma ordem do ramo real: pendentes primeiro.
+    return [...demoProfiles].sort(
+      (a, b) =>
+        Number(a.is_active) - Number(b.is_active) ||
+        a.full_name.localeCompare(b.full_name, "pt-BR"),
+    );
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data } = await supabase
+    .from("profiles")
+    .select("*")
+    .order("is_active", { ascending: true })
     .order("full_name");
 
   return (data ?? []) as Profile[];

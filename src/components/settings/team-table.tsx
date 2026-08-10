@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { ShieldCheck, User } from "lucide-react";
+import { Check, Clock, ShieldCheck, User } from "lucide-react";
 
 import {
   Select,
@@ -11,7 +11,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { setUserRole } from "@/app/(app)/configuracoes/equipe/actions";
+import {
+  setUserActive,
+  setUserRole,
+} from "@/app/(app)/configuracoes/equipe/actions";
 import { initials } from "@/lib/format";
 import type { Profile } from "@/types/database";
 
@@ -38,8 +41,8 @@ export function TeamTable({
 }) {
   return (
     <div className="surface-card overflow-hidden">
-      <div className="hidden grid-cols-[1fr_200px_180px] gap-4 border-b border-hairline px-4 py-2.5 md:grid">
-        {["Pessoa", "E-mail", "Acesso"].map((l) => (
+      <div className="hidden grid-cols-[1fr_180px_170px_150px] gap-4 border-b border-hairline px-4 py-2.5 md:grid">
+        {["Pessoa", "E-mail", "Acesso", "Situação"].map((l) => (
           <span key={l} className="eyebrow">
             {l}
           </span>
@@ -61,7 +64,28 @@ export function TeamTable({
 
 function TeamRow({ pessoa, ehVoce }: { pessoa: Profile; ehVoce: boolean }) {
   const [papel, setPapel] = useState<string>(pessoa.role);
+  const [ativo, setAtivo] = useState<boolean>(pessoa.is_active);
   const [salvando, startTransition] = useTransition();
+
+  function alternarAcesso() {
+    const alvo = !ativo;
+    setAtivo(alvo);
+
+    startTransition(async () => {
+      const r = await setUserActive({ profileId: pessoa.id, isActive: alvo });
+
+      if (r.ok) {
+        toast.success(
+          alvo
+            ? `${pessoa.full_name} liberado. O painel abre no próximo carregamento.`
+            : `Acesso de ${pessoa.full_name} suspenso.`,
+        );
+      } else {
+        setAtivo(!alvo);
+        toast.error(r.error);
+      }
+    });
+  }
 
   function trocar(novo: string) {
     const anterior = papel;
@@ -85,7 +109,14 @@ function TeamRow({ pessoa, ehVoce }: { pessoa: Profile; ehVoce: boolean }) {
   }
 
   return (
-    <li className="grid grid-cols-1 items-center gap-x-4 gap-y-2 px-4 py-3 md:grid-cols-[1fr_200px_180px]">
+    <li
+      className={
+        "grid grid-cols-1 items-center gap-x-4 gap-y-2 px-4 py-3 md:grid-cols-[1fr_180px_170px_150px] " +
+        /* Pendente ganha destaque: é a única linha da tela que pede uma
+           decisão, e sem marca ela some no meio da equipe já aprovada. */
+        (ativo ? "" : "bg-signal-muted/25")
+      }
+    >
       <span className="flex min-w-0 items-center gap-2.5">
         <span className="grid size-8 shrink-0 place-items-center rounded-full bg-surface-2 text-[10px] font-semibold ring-1 ring-hairline">
           {initials(pessoa.full_name)}
@@ -139,6 +170,29 @@ function TeamRow({ pessoa, ehVoce }: { pessoa: Profile; ehVoce: boolean }) {
           <SelectItem value="collaborator">Colaborador</SelectItem>
         </SelectContent>
       </Select>
+
+      {/* Mesma regra do seletor de papel: o admin não se suspende. */}
+      {ativo ? (
+        <button
+          type="button"
+          onClick={alternarAcesso}
+          disabled={salvando || ehVoce}
+          className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-hairline text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+        >
+          <Check className="size-3.5 text-positive" />
+          Liberado
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={alternarAcesso}
+          disabled={salvando}
+          className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-primary text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+        >
+          <Clock className="size-3.5" />
+          Liberar acesso
+        </button>
+      )}
     </li>
   );
 }

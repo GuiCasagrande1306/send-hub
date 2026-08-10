@@ -39,11 +39,14 @@ export default function LoginPage() {
             </div>
           </div>
 
+          {/* Título neutro: o mesmo bloco serve aos dois modos do
+              formulário abaixo, e trocá-lo por JS faria o texto piscar
+              a cada clique na aba. */}
           <h1 className="text-2xl font-semibold tracking-[-0.02em]">
-            Entrar na sua conta
+            Acessar o Send Hub
           </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            Use o e-mail corporativo cadastrado pela agência.
+            Entre com seu e-mail corporativo ou crie uma conta.
           </p>
 
           {isDemoMode ? (
