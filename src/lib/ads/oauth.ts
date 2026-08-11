@@ -134,13 +134,39 @@ export async function saveIntegrationTokens(input: {
   // integrações com este marcador.
   const contaPendente = `pending:${input.platform}`;
 
+  /* REAUTORIZAR TEM QUE REUSAR A LINHA QUE JÁ EXISTE.
+     O upsert casa por `(client_id, platform, external_account_id)`, e
+     `setAdAccountId` troca aquele terceiro campo de `pending:` para
+     `act_123…` quando alguém escolhe a conta. Consequência: num cliente
+     JÁ vinculado, reautorizar não encontrava conflito e inseria uma
+     SEGUNDA linha `pending:`. A partir daí `/api/meta/ad-accounts`, que
+     busca com `.maybeSingle()` por client_id+platform, recebia duas e
+     falhava — e a tela dizia "ainda não autorizou", que é o oposto do
+     que tinha acabado de acontecer.
+
+     Como o token vale ~60 dias e não há renovação automática,
+     reautorizar é rotina, não exceção: este caminho vai ser percorrido
+     por todo cliente a cada dois meses. */
+  const { data: existente } = await admin
+    .from("client_integrations")
+    .select("external_account_id")
+    .eq("client_id", input.clientId)
+    .eq("platform", input.platform)
+    .limit(1)
+    .maybeSingle();
+
+  /* Precedência: a conta explícita do chamador vence; senão preserva a
+     que já estava vinculada; e só um vínculo novo nasce pendente. */
+  const contaAlvo =
+    input.externalAccountId ?? existente?.external_account_id ?? contaPendente;
+
   const { data: integracao, error: erroIntegracao } = await admin
     .from("client_integrations")
     .upsert(
       {
         client_id: input.clientId,
         platform: input.platform,
-        external_account_id: input.externalAccountId ?? contaPendente,
+        external_account_id: contaAlvo,
         display_name: input.displayName ?? null,
         is_active: true,
         sync_error: null,
