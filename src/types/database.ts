@@ -76,6 +76,14 @@ export interface Client {
   /** Dia do mês (1-28) do envio automático; null quando não agendado. */
   report_day: number | null;
   report_enabled: boolean;
+  /**
+   * Resumo semanal em TEXTO por WhatsApp, sem PDF. Interruptor próprio
+   * de propósito: existe cliente que quer o acompanhamento da semana e
+   * não quer o fechamento mensal, e o contrário também.
+   */
+  weekly_report_enabled: boolean;
+  /** Dia do envio semanal: 1=segunda … 7=domingo (ISO, como acima). */
+  weekly_report_day: number;
   /** Dia útil da rotina: 1=segunda … 5=sexta. NULL = sem rotina. */
   optimization_day: number | null;
   created_at: string;
@@ -452,6 +460,12 @@ export interface ReportHistory {
   snapshot: Record<string, unknown>;
   /** true quando gerado pelo cron; impede disparo duplicado do período. */
   is_automated: boolean;
+  /**
+   * `monthly` = PDF do fechamento. `weekly` = resumo de texto por
+   * WhatsApp, sem anexo — a linha nasce sem `storage_path`, e é esta
+   * coluna que impede a fila de oferecer "Conferir PDF" onde não há um.
+   */
+  kind: "monthly" | "weekly";
   created_at: string;
 }
 

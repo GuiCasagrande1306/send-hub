@@ -159,6 +159,8 @@ export const demoClients: Client[] = [
     contract_start: daysAgo(300),
     report_day: 5,
     report_enabled: true,
+    weekly_report_enabled: true,
+    weekly_report_day: 1,
     optimization_day: 1,
     owner_id: "u-admin",
     created_at: daysAgo(300),
@@ -192,6 +194,8 @@ export const demoClients: Client[] = [
     contract_start: daysAgo(210),
     report_day: 12,
     report_enabled: true,
+    weekly_report_enabled: true,
+    weekly_report_day: 1,
     optimization_day: 3,
     owner_id: "u-lucas",
     created_at: daysAgo(210),
@@ -225,6 +229,8 @@ export const demoClients: Client[] = [
     contract_start: daysAgo(120),
     report_day: null,
     report_enabled: false,
+    weekly_report_enabled: false,
+    weekly_report_day: 1,
     optimization_day: 3,
     owner_id: "u-admin",
     created_at: daysAgo(120),
@@ -254,6 +260,8 @@ export const demoClients: Client[] = [
     contract_start: daysAgo(25),
     report_day: null,
     report_enabled: false,
+    weekly_report_enabled: true,
+    weekly_report_day: 3,
     optimization_day: 5,
     owner_id: "u-lucas",
     created_at: daysAgo(25),
@@ -1075,6 +1083,7 @@ export const demoReports: ReportHistory[] = [
     period_end: daysAgo(31),
     status: "sent",
     is_automated: false,
+    kind: "monthly" as const,
     provider_message_id: null,
     snapshot: {},
     error_message: null,
@@ -1096,6 +1105,7 @@ export const demoReports: ReportHistory[] = [
     period_end: daysAgo(16),
     status: "sent",
     is_automated: false,
+    kind: "monthly" as const,
     provider_message_id: null,
     snapshot: {},
     error_message: null,
@@ -1117,6 +1127,7 @@ export const demoReports: ReportHistory[] = [
     period_end: daysAgo(1),
     status: "ready",
     is_automated: false,
+    kind: "monthly" as const,
     provider_message_id: null,
     snapshot: {},
     error_message: null,
@@ -1129,7 +1140,53 @@ export const demoReports: ReportHistory[] = [
     generated_by: "u-lucas",
     created_at: daysAhead(-1),
   },
+  /* Resumo semanal aguardando envio. Sem `storage_path` nem
+     `page_count` de propósito: é texto, não anexo — e é essa linha que
+     faz a fila mostrar "Ver texto" no lugar de "Conferir PDF". */
+  {
+    id: "rh-4",
+    client_id: "c-verdi",
+    template_id: null,
+    title: "Resumo semanal · 03/08/2026 até 09/08/2026",
+    period_start: daysAgo(7),
+    period_end: daysAgo(1),
+    status: "ready",
+    is_automated: true,
+    kind: "weekly" as const,
+    provider_message_id: null,
+    snapshot: {
+      kind: "weekly",
+      texto: [
+        "Olá! Segue abaixo relatório das campanhas de Vendas!",
+        "",
+        `Período: ${formatarDataDemo(daysAgo(7))} até ${formatarDataDemo(daysAgo(1))}`,
+        "",
+        "Alcance: 5.113",
+        "Impressões: 26.405",
+        "💵Ticket Médio: R$ 109,04",
+        "🛒Vendas: 26",
+        "💰Faturamento: R$ 2.834,95",
+        "💵 Valor investido: R$ 225,84",
+        "📊ROAS: 12,55",
+      ].join("\n"),
+    },
+    error_message: null,
+    storage_path: null,
+    public_url: null,
+    page_count: null,
+    channel: null,
+    recipient: null,
+    delivered_at: null,
+    generated_by: null,
+    created_at: daysAhead(0),
+  },
 ];
+
+/** dd/MM/yyyy sem depender de `format.ts`, que é do lado do app. */
+function formatarDataDemo(iso: string): string {
+  const [a, m, d] = iso.split("-");
+  return `${d}/${m}/${a}`;
+}
 
 /* ------------------------------------------------------------------ */
 /* Esteira de otimizações                                              */

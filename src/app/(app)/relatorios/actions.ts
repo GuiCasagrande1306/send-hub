@@ -8,7 +8,7 @@ import { getClients, getReports } from "@/lib/data";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient, getCurrentUser } from "@/lib/supabase/server";
 import { buildGroupCaption } from "@/lib/reports/payload";
-import { sendReportFromUser } from "@/lib/whatsapp/session";
+import { sendFromUser, sendReportFromUser } from "@/lib/whatsapp/session";
 import type { Client, ReportHistory } from "@/types/database";
 
 /* =====================================================================
@@ -157,23 +157,75 @@ export async function enviarRelatorio(
     return { ok: false, error: "Este relatório já foi enviado." };
   }
 
-  if (!linha.storage_path) {
-    return { ok: false, error: "O PDF ainda não foi gerado." };
-  }
-
-  const { data: client } = await supabase
+  /* A checagem de PDF vem DEPOIS do desvio semanal: a linha semanal
+     nasce sem `storage_path` de propósito, e barrá-la aqui recusaria
+     justamente o que ela é. */
+  const { data: clientRow } = await supabase
     .from("clients")
     .select("*")
     .eq("id", linha.client_id)
     .maybeSingle();
 
-  if (!client) {
+  if (!clientRow) {
     return { ok: false, error: "Cliente não encontrado ou sem permissão." };
   }
 
-  const destino = (client as Client).whatsapp_phone;
+  const client = clientRow as Client;
+
+  const destino = client.whatsapp_phone;
   if (!destino) {
     return { ok: false, error: "Cliente sem WhatsApp cadastrado." };
+  }
+
+  /* --- Resumo semanal: texto puro, sem anexo ------------------------
+     Mesmo botão da fila, caminho diferente. O texto já foi montado pelo
+     cron e congelado no snapshot — remontar agora consultaria de novo
+     as plataformas, que reprocessam conversões por semanas, e o número
+     enviado deixaria de ser o número que alguém conferiu na tela. */
+  if (linha.kind === "weekly") {
+    const texto =
+      linha.snapshot && typeof linha.snapshot === "object"
+        ? String((linha.snapshot as { texto?: unknown }).texto ?? "")
+        : "";
+
+    if (!texto) {
+      return { ok: false, error: "O texto do resumo não foi gravado." };
+    }
+
+    await supabase
+      .from("report_history")
+      .update({ status: "sending" })
+      .eq("id", reportId);
+
+    const envio = await sendFromUser(user.id, destino, texto);
+
+    if (!envio.success) {
+      await supabase
+        .from("report_history")
+        .update({ status: "failed", error_message: envio.error })
+        .eq("id", reportId);
+
+      return { ok: false, error: envio.error };
+    }
+
+    await supabase
+      .from("report_history")
+      .update({
+        status: "sent",
+        channel: "whatsapp",
+        recipient: destino,
+        delivered_at: new Date().toISOString(),
+        provider_message_id: envio.messageId,
+        generated_by: linha.generated_by ?? user.id,
+      })
+      .eq("id", reportId);
+
+    revalidatePath("/relatorios");
+    return { ok: true };
+  }
+
+  if (!linha.storage_path) {
+    return { ok: false, error: "O PDF ainda não foi gerado." };
   }
 
   /* URL assinada NOVA, não a gravada em `public_url`.
@@ -197,14 +249,14 @@ export async function enviarRelatorio(
   const legenda =
     linha.snapshot && typeof linha.snapshot === "object"
       ? buildGroupCaption(linha.snapshot as never)
-      : `Segue o relatório de performance de ${(client as Client).name}.`;
+      : `Segue o relatório de performance de ${client.name}.`;
 
   const resultado = await sendReportFromUser(
     user.id,
     destino,
     assinada.signedUrl,
     legenda,
-    (client as Client).name,
+    client.name,
   );
 
   if (!resultado.success) {
@@ -320,6 +372,10 @@ const agendaSchema = z.object({
   enabled: z.boolean(),
   /* Telefone OU JID de grupo (`...@g.us`). Vazio limpa o destino. */
   whatsapp: z.string().trim().max(120),
+  /* Cadência semanal, independente da mensal acima. 1=segunda … 7=domingo,
+     a convenção ISO da coluna — ver a migration 40. */
+  weeklyEnabled: z.boolean(),
+  weeklyDay: z.number().int().min(1).max(7),
 });
 
 /**
@@ -341,6 +397,8 @@ export async function salvarAgendaDeRelatorio(input: {
   reportDay: number | null;
   enabled: boolean;
   whatsapp: string;
+  weeklyEnabled: boolean;
+  weeklyDay: number;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const parsed = agendaSchema.safeParse(input);
   if (!parsed.success) {
@@ -353,7 +411,8 @@ export async function salvarAgendaDeRelatorio(input: {
     };
   }
 
-  const { clientId, reportDay, enabled, whatsapp } = parsed.data;
+  const { clientId, reportDay, enabled, whatsapp, weeklyEnabled, weeklyDay } =
+    parsed.data;
 
   /* LIGADO SEM DIA NUNCA DISPARA. O job procura `report_day = <dia de
      hoje>`, então um cliente marcado como ativo e sem dia fica para
@@ -373,6 +432,16 @@ export async function salvarAgendaDeRelatorio(input: {
     };
   }
 
+  /* Mesma regra para o semanal, e ela precisa ser checada à parte: o
+     resumo semanal não depende de `report_day`, então um cliente pode
+     ter só ele ligado — e aí é o destino dele que falta. */
+  if (weeklyEnabled && whatsapp === "") {
+    return {
+      ok: false,
+      error: "Sem destino no WhatsApp o resumo semanal não tem para onde ir.",
+    };
+  }
+
   if (isDemoMode) {
     const { demoClients } = await import("@/lib/mock/data");
     const alvo = demoClients.find((c) => c.id === clientId);
@@ -380,6 +449,8 @@ export async function salvarAgendaDeRelatorio(input: {
       alvo.report_day = reportDay;
       alvo.report_enabled = enabled;
       alvo.whatsapp_phone = whatsapp || null;
+      alvo.weekly_report_enabled = weeklyEnabled;
+      alvo.weekly_report_day = weeklyDay;
     }
     revalidatePath("/relatorios");
     return { ok: true };
@@ -392,6 +463,8 @@ export async function salvarAgendaDeRelatorio(input: {
       report_day: reportDay,
       report_enabled: enabled,
       whatsapp_phone: whatsapp || null,
+      weekly_report_enabled: weeklyEnabled,
+      weekly_report_day: weeklyDay,
     })
     .eq("id", clientId);
 

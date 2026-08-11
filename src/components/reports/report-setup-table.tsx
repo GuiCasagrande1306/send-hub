@@ -37,7 +37,21 @@ interface Rascunho {
   whatsapp: string;
   dia: string;
   ativo: boolean;
+  semanal: boolean;
+  diaSemanal: string;
 }
+
+/* 1..7 ISO, a convenção da coluna — ver a migration 40. Rótulo curto
+   porque a coluna tem 92px e "Segunda-feira" não cabe. */
+const DIAS_DA_SEMANA = [
+  { valor: "1", curto: "Seg" },
+  { valor: "2", curto: "Ter" },
+  { valor: "3", curto: "Qua" },
+  { valor: "4", curto: "Qui" },
+  { valor: "5", curto: "Sex" },
+  { valor: "6", curto: "Sáb" },
+  { valor: "7", curto: "Dom" },
+] as const;
 
 function estaPronto(linha: ReportSetupRow): boolean {
   return Boolean(linha.reportEnabled && linha.reportDay && linha.whatsappPhone);
@@ -75,6 +89,8 @@ export function ReportSetupTable({ linhas }: { linhas: ReportSetupRow[] }) {
         whatsapp: linha.whatsappPhone ?? "",
         dia: linha.reportDay ? String(linha.reportDay) : "",
         ativo: linha.reportEnabled,
+        semanal: linha.weeklyEnabled,
+        diaSemanal: String(linha.weeklyDay),
       }
     );
   }
@@ -87,7 +103,7 @@ export function ReportSetupTable({ linhas }: { linhas: ReportSetupRow[] }) {
   }
 
   function salvar(linha: ReportSetupRow) {
-    const { whatsapp, dia, ativo } = valorAtual(linha);
+    const { whatsapp, dia, ativo, semanal, diaSemanal } = valorAtual(linha);
 
     const diaLimpo = dia.trim();
     const diaNum = diaLimpo === "" ? null : Number(diaLimpo);
@@ -105,6 +121,8 @@ export function ReportSetupTable({ linhas }: { linhas: ReportSetupRow[] }) {
         reportDay: diaNum,
         enabled: ativo,
         whatsapp,
+        weeklyEnabled: semanal,
+        weeklyDay: Number(diaSemanal),
       });
 
       setSalvando(null);
@@ -173,10 +191,21 @@ export function ReportSetupTable({ linhas }: { linhas: ReportSetupRow[] }) {
           </div>
 
           <div className="surface-card overflow-hidden">
-            <div className="hidden grid-cols-[1fr_260px_80px_92px_92px] gap-3 border-b border-hairline px-4 py-2.5 lg:grid">
-              {["Cliente", "Destino no WhatsApp", "Dia", "Automático", ""].map(
+            <div className="hidden grid-cols-[1fr_240px_64px_88px_88px_74px_88px] gap-3 border-b border-hairline px-4 py-2.5 lg:grid">
+              {[
+                "Cliente",
+                "Destino no WhatsApp",
+                "Dia",
+                "PDF mensal",
+                "Resumo semanal",
+                "Dia",
+                "",
+              ].map(
+                /* Chave pelo ÍNDICE e não pelo rótulo: existem duas
+                   colunas "Dia" — a do mês e a da semana — e usar o
+                   texto colidia. */
                 (label, i) => (
-                  <span key={label || i} className="eyebrow">
+                  <span key={i} className="eyebrow">
                     {label}
                   </span>
                 ),
@@ -197,7 +226,7 @@ export function ReportSetupTable({ linhas }: { linhas: ReportSetupRow[] }) {
                   return (
                     <li
                       key={linha.id}
-                      className="grid grid-cols-1 gap-x-3 gap-y-2 px-4 py-3 lg:grid-cols-[1fr_260px_80px_92px_92px] lg:items-center"
+                      className="grid grid-cols-1 gap-x-3 gap-y-2 px-4 py-3 lg:grid-cols-[1fr_240px_64px_88px_88px_74px_88px] lg:items-center"
                     >
                       <div className="flex min-w-0 items-center gap-2.5">
                         <ClientAvatar
@@ -243,10 +272,42 @@ export function ReportSetupTable({ linhas }: { linhas: ReportSetupRow[] }) {
                             editar(linha, { ativo: e.target.checked })
                           }
                           className="size-3.5 accent-[var(--primary)]"
-                          aria-label={`Envio automático de ${linha.name}`}
+                          aria-label={`PDF mensal de ${linha.name}`}
                         />
-                        <span className="lg:hidden">Automático</span>
+                        <span className="lg:hidden">PDF mensal</span>
                       </label>
+
+                      {/* Cadência semanal: interruptor próprio, porque
+                          existe cliente que quer o acompanhamento da
+                          semana e não quer o fechamento em PDF. */}
+                      <label className="flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={rascunho.semanal}
+                          onChange={(e) =>
+                            editar(linha, { semanal: e.target.checked })
+                          }
+                          className="size-3.5 accent-[var(--primary)]"
+                          aria-label={`Resumo semanal de ${linha.name}`}
+                        />
+                        <span className="lg:hidden">Resumo semanal</span>
+                      </label>
+
+                      <select
+                        value={rascunho.diaSemanal}
+                        onChange={(e) =>
+                          editar(linha, { diaSemanal: e.target.value })
+                        }
+                        disabled={!rascunho.semanal || salvando === linha.id}
+                        aria-label={`Dia do resumo semanal de ${linha.name}`}
+                        className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm disabled:opacity-40"
+                      >
+                        {DIAS_DA_SEMANA.map((d) => (
+                          <option key={d.valor} value={d.valor}>
+                            {d.curto}
+                          </option>
+                        ))}
+                      </select>
 
                       <div className="flex lg:justify-end">
                         <Button

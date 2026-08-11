@@ -89,6 +89,9 @@ export async function createClientAction(
       // que talvez ainda nem exista.
       report_day: null,
       report_enabled: false,
+      // Pelo mesmo motivo, o resumo semanal também nasce desligado.
+      weekly_report_enabled: false,
+      weekly_report_day: 1,
       optimization_day: values.optimizationDay
         ? Number(values.optimizationDay)
         : null,

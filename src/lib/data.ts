@@ -565,6 +565,10 @@ export interface ReportSetupRow {
   /** Dia do mês do envio automático, 1–28. */
   reportDay: number | null;
   reportEnabled: boolean;
+  /** Resumo semanal em texto — cadência própria, sem PDF. */
+  weeklyEnabled: boolean;
+  /** Dia do envio semanal: 1=segunda … 7=domingo. */
+  weeklyDay: number;
 }
 
 /**
@@ -592,6 +596,8 @@ export async function getReportSetup(): Promise<ReportSetupRow[]> {
       whatsappPhone: c.whatsapp_phone,
       reportDay: c.report_day,
       reportEnabled: c.report_enabled,
+      weeklyEnabled: c.weekly_report_enabled,
+      weeklyDay: c.weekly_report_day,
     }));
 }
 

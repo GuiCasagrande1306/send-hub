@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { serverEnv } from "@/lib/env";
 import { syncAllClients } from "@/lib/ads/sync";
 import { dispatchScheduledReports } from "@/lib/reports/schedule";
+import { dispatchWeeklySummaries } from "@/lib/reports/weekly-schedule";
 import { materializarMes, mesCorrente } from "@/lib/finance/recurrence";
 
 /**
@@ -141,6 +142,33 @@ export async function GET(request: NextRequest) {
       });
     } catch (error) {
       resposta.relatorios = {
+        erro: error instanceof Error ? error.message : "falha desconhecida",
+      };
+    }
+  }
+
+  /* --- 3. Resumos semanais -------------------------------------------
+     Depois do sync, pela mesma razão da etapa 2: montar antes de
+     sincronizar produziria um texto com os números de anteontem.
+
+     Sem orçamento de tempo, ao contrário do PDF: aqui não sobe Chromium
+     nenhum — é uma consulta e uma linha por cliente. A carteira inteira
+     cabe em segundos.
+
+     Etapa própria e não um `if` dentro do envio: as cadências têm dias
+     diferentes, e quase todo dia uma das duas não tem ninguém. */
+  if (rodar("semanal")) {
+    try {
+      const diaForcado = Number(searchParams.get("diaDaSemana"));
+
+      resposta.semanais = await dispatchWeeklySummaries({
+        diaForcado:
+          Number.isInteger(diaForcado) && diaForcado >= 1 && diaForcado <= 7
+            ? diaForcado
+            : undefined,
+      });
+    } catch (error) {
+      resposta.semanais = {
         erro: error instanceof Error ? error.message : "falha desconhecida",
       };
     }
