@@ -160,6 +160,34 @@ export function formatPeriod(start: string, end: string): string {
   return `${formatDateFull(s)} – ${formatDateFull(e)}`;
 }
 
+/**
+ * "03/08/2026" — data numérica, para texto que o cliente lê no celular.
+ *
+ * `formatDate` e `formatDateFull` escrevem o mês por extenso, ótimo na
+ * capa do PDF e comprido demais numa linha de WhatsApp.
+ *
+ * A âncora `T12:00:00` importa: uma data pura vinda do banco
+ * ("2026-08-03") é interpretada como meia-noite UTC, que aqui é 21h do
+ * dia 2 — o resumo sairia com o período um dia atrasado nas duas pontas.
+ */
+export function formatDateNumeric(iso: string | Date): string {
+  const date =
+    typeof iso === "string"
+      ? new Date(iso.length === 10 ? `${iso}T12:00:00` : iso)
+      : iso;
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+}
+
+/** "03/08/2026 até 09/08/2026" — o cabeçalho do resumo semanal. */
+export function formatPeriodNumeric(start: string, end: string): string {
+  return `${formatDateNumeric(start)} até ${formatDateNumeric(end)}`;
+}
+
 /** Prazo em linguagem natural: "Vence hoje", "Atrasada 3d", "em 5d". */
 export function formatDueDate(iso: string | null): {
   label: string;

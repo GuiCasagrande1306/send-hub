@@ -76,6 +76,41 @@ export function segundaDestaSemana(quando: Date = new Date()): string {
 }
 
 /**
+ * Os sete dias fechados que terminaram ONTEM, no fuso de São Paulo.
+ *
+ * É o período do resumo semanal. "Sete dias terminando ontem" e não
+ * "semana de segunda a domingo" porque o dia do envio é escolhido por
+ * cliente: com esta regra, quem manda na segunda recebe segunda a
+ * domingo — a semana fechada, como se espera — e quem manda na quarta
+ * recebe quarta a terça, também sete dias inteiros. A outra regra
+ * ("última semana completa") faria o envio de quarta falar de algo que
+ * terminou três dias antes.
+ *
+ * ONTEM e não hoje: o dia corrente ainda está sendo veiculado, e as
+ * plataformas seguem reprocessando conversão dele por horas. Incluí-lo
+ * é publicar um número que muda depois de o cliente ler.
+ */
+export function ultimosSeteDiasBR(quando: Date = new Date()): {
+  /** YYYY-MM-DD, seis dias antes do fim. */
+  inicio: string;
+  /** YYYY-MM-DD, ontem. */
+  fim: string;
+} {
+  /* Mesma âncora ao meio-dia de `segundaDestaSemana`, pelo mesmo
+     motivo: partir da meia-noite deixa o cálculo a três horas da
+     virada. */
+  const base = new Date(`${dataNoBrasil(quando)}T12:00:00-03:00`);
+
+  base.setUTCDate(base.getUTCDate() - 1);
+  const fim = dataNoBrasil(base);
+
+  base.setUTCDate(base.getUTCDate() - 6);
+  const inicio = dataNoBrasil(base);
+
+  return { inicio, fim };
+}
+
+/**
  * Início de um dia brasileiro como instante absoluto, para comparar com
  * `timestamptz` no banco.
  *
