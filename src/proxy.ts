@@ -53,6 +53,11 @@ export async function proxy(request: NextRequest) {
        COM sessão não pode ser mandado para a raiz — que é justamente de
        onde o layout o expulsou. */
     pathname === "/sem-acesso" ||
+    /* Páginas legais. Precisam abrir SEM sessão: quem as lê é o revisor
+       da Meta, que chega deslogado a partir do cadastro do app — se
+       caírem em /login, a revisão é reprovada por "URL inacessível". */
+    pathname === "/privacidade" ||
+    pathname === "/exclusao-de-dados" ||
     // O service worker busca /offline durante o install para guardá-la
     // na casca. Com redirect ligado, ele cacheria a TELA DE LOGIN sob a
     // chave /offline e a mostraria toda vez que a rede caísse.
