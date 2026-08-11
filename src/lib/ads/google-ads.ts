@@ -39,8 +39,20 @@ import type { AdsProvider, NormalizedMetricRow, ProviderResult } from "./types";
    gateway. Foi assim que apareceu "[network_error] Unexpected token '<',
    \"<!DOCTYPE\"" na tela — erro de parse disfarçando um endpoint que
    deixou de existir. Medido em 07/08/2026: v18 e v19 dão 404; v20 e v21
-   respondem. */
-export const API_VERSION = "v21";
+   respondem.
+
+   ⚠️ ATUALIZADA PARA v24 EM 11/08/2026, E AINDA NÃO EXERCITADA CONTRA A
+   API DE VERDADE — não há developer token nesta instalação. O Google
+   mantém só as três majors mais recentes, e a v21 saiu dessa janela: o
+   `UNSUPPORTED_VERSION` "intermitente" que `google-balance.ts` contorna
+   com uma repetição não é instabilidade, é o desligamento entrando no
+   ar aos poucos. Ficar na v21 era falha garantida; a v24 é a aposta
+   conservadora dentro do que ainda vive.
+
+   Ao conectar o Google pela primeira vez, confirme aqui antes de
+   procurar o erro em outro lugar. Se aparecer HTML no lugar de JSON, é
+   esta linha. */
+export const API_VERSION = "v24";
 
 /** GAQL: uma linha por campanha por dia. */
 export const DAILY_METRICS_QUERY = `

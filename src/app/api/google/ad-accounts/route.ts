@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentUser } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { serverEnv } from "@/lib/env";
+import { API_VERSION, exchangeRefreshToken } from "@/lib/ads/google-ads";
 
 /**
  * GET /api/google/ad-accounts?clientId=<uuid>
@@ -20,11 +21,6 @@ import { serverEnv } from "@/lib/env";
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-/* A Google aposenta versão a cada poucos meses, e a resposta de uma
-   versão morta é a página HTML 404 do gateway — não um JSON de erro.
-   Manter em sincronia com `lib/ads/google-ads.ts`. */
-const API_VERSION = "v21";
 
 interface ContaGoogle {
   id: string;
@@ -86,7 +82,7 @@ export async function GET(request: NextRequest) {
     } | null
   )?.integration_secrets;
 
-  if (!segredos?.access_token) {
+  if (!segredos?.refresh_token) {
     return NextResponse.json({
       ok: false,
       error:
@@ -94,8 +90,26 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  /* TROCA O REFRESH TOKEN, não reusa o access_token gravado.
+     O `access_token` de `integration_secrets` foi emitido no
+     consentimento e vale UMA HORA; nada no sistema o renova — o único
+     ponto que escreve nessa tabela é o callback do OAuth. Esta rota era
+     a única do lado Google que o usava direto (google-ads.ts:113,
+     google-balance.ts:127 e google-structure.ts:78 todas trocam), então
+     o seletor de contas funcionava na primeira hora depois de autorizar
+     e devolvia 401 para sempre depois disso — sem mensagem que
+     apontasse para a causa. */
+  const acesso = await exchangeRefreshToken(segredos.refresh_token);
+
+  if (!acesso.ok) {
+    return NextResponse.json({
+      ok: false,
+      error: `Google recusou renovar o acesso: ${acesso.message}`,
+    });
+  }
+
   const headers = {
-    Authorization: `Bearer ${segredos.access_token}`,
+    Authorization: `Bearer ${acesso.accessToken}`,
     "developer-token": serverEnv.googleAdsDeveloperToken,
     "login-customer-id": serverEnv.googleAdsLoginCustomerId.replace(/\D/g, ""),
     "Content-Type": "application/json",
