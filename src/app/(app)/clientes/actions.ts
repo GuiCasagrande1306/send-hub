@@ -252,7 +252,14 @@ export async function setAdAccountId(input: {
 
   const supabase = await createSupabaseServerClient();
 
-  const { error } = await supabase
+  /* `.select()` para CONTAR o que foi alterado.
+     Sem ele, um UPDATE que não encontra linha nenhuma é sucesso para o
+     PostgREST — e era o que acontecia com quem digitasse o Customer ID
+     antes de autorizar a plataforma: a integração não existe, zero
+     linhas mudam, a tela confirma o vínculo e nada foi gravado. Falha
+     silenciosa, e a pessoa só descobre no dia seguinte, quando o
+     relatório sai vazio. */
+  const { data: alteradas, error } = await supabase
     .from("client_integrations")
     .update({
       external_account_id:
@@ -260,9 +267,20 @@ export async function setAdAccountId(input: {
       sync_error: null,
     })
     .eq("client_id", input.clientId)
-    .eq("platform", input.platform);
+    .eq("platform", input.platform)
+    .select("id");
 
   if (error) return { ok: false, error: error.message };
+
+  if (!alteradas || alteradas.length === 0) {
+    return {
+      ok: false,
+      error:
+        input.platform === "google_ads"
+          ? "Autorize o Google Ads neste cliente antes de informar o Customer ID."
+          : "Autorize o Meta Ads neste cliente antes de informar o ID da conta.",
+    };
+  }
 
   /* Puxa os números AGORA.
      ---------------------------------------------------------------
