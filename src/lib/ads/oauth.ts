@@ -170,6 +170,10 @@ export async function saveIntegrationTokens(input: {
         display_name: input.displayName ?? null,
         is_active: true,
         sync_error: null,
+        /* Espelho do vencimento, para a interface avisar antes de
+           quebrar sem precisar ler a tabela de segredos — que não tem
+           policy nenhuma de propósito. Ver a migration 41. */
+        token_expires_at: input.tokens.expiresAt,
       },
       { onConflict: "client_id,platform,external_account_id" },
     )

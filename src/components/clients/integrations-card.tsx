@@ -262,6 +262,45 @@ function LinhaIntegracao({
         </Button>
       </div>
 
+      {/* AVISO DE VENCIMENTO.
+          O token da Meta dura ~60 dias. O cron tenta renovar sozinho a
+          partir de 15 dias do fim (ver `lib/ads/token-renewal.ts`), e na
+          imensa maioria das vezes isto nunca aparece. Ele existe para o
+          caso em que a renovação NÃO resolve — permissão revogada pelo
+          cliente, app com credencial trocada, Graph fora do ar por dias.
+          Sem ele, o primeiro sinal seria o relatório sair vazio. */}
+      {status.connected && diasParaVencer(status.tokenExpiresAt) !== null && (
+        <p
+          role="status"
+          className={cn(
+            "mt-3 flex items-start gap-1.5 rounded-lg px-3 py-2 text-2xs leading-relaxed",
+            (diasParaVencer(status.tokenExpiresAt) ?? 0) <= 0
+              ? "bg-negative-muted/40 text-negative"
+              : "bg-warning-muted/50 text-foreground",
+          )}
+        >
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            {(diasParaVencer(status.tokenExpiresAt) ?? 0) <= 0 ? (
+              <>
+                <strong>A autorização venceu.</strong> A sincronização parou e o
+                relatório sai vazio até alguém clicar em Reautorizar.
+              </>
+            ) : (
+              <>
+                A autorização vence em{" "}
+                <strong>
+                  {diasParaVencer(status.tokenExpiresAt)}{" "}
+                  {diasParaVencer(status.tokenExpiresAt) === 1 ? "dia" : "dias"}
+                </strong>
+                . A renovação automática roda todo dia; se este aviso continuar
+                aqui amanhã, ela não está conseguindo — reautorize na mão.
+              </>
+            )}
+          </span>
+        </p>
+      )}
+
       {status.connected && (
         <div className="mt-3 border-t border-hairline pt-3">
           <div className="flex flex-wrap items-end gap-2">
@@ -435,4 +474,26 @@ function LinhaIntegracao({
 function formatarData(iso: string): string {
   const [a, m, d] = iso.split("-");
   return `${d}/${m}/${a}`;
+}
+
+/**
+ * Dias inteiros até o vencimento, ou `null` quando não há o que avisar.
+ *
+ * Devolve null em dois casos que NÃO são aviso: sem prazo conhecido (é o
+ * normal do Google, cujo refresh token não expira) e faltando mais de 20
+ * dias — acima disso a renovação automática ainda nem começou a tentar,
+ * e mostrar a contagem o ano inteiro treinaria a equipe a ignorá-la.
+ *
+ * O teto é 20 e não 15 de propósito: dá cinco dias de sobreposição, para
+ * a pessoa ver o aviso aparecer ANTES de o job começar a agir e entender
+ * que os dois estão relacionados.
+ */
+function diasParaVencer(iso: string | null): number | null {
+  if (!iso) return null;
+
+  const alvo = new Date(iso).getTime();
+  if (Number.isNaN(alvo)) return null;
+
+  const dias = Math.ceil((alvo - Date.now()) / 864e5);
+  return dias > 20 ? null : dias;
 }

@@ -4,6 +4,7 @@ import { serverEnv } from "@/lib/env";
 import { syncAllClients } from "@/lib/ads/sync";
 import { dispatchScheduledReports } from "@/lib/reports/schedule";
 import { dispatchWeeklySummaries } from "@/lib/reports/weekly-schedule";
+import { renovarTokensMeta } from "@/lib/ads/token-renewal";
 import { materializarMes, mesCorrente } from "@/lib/finance/recurrence";
 
 /**
@@ -84,9 +85,9 @@ export async function GET(request: NextRequest) {
      de fora do mês inteiro — e um deploy quebrado no dia 1º deixa de
      custar a cobrança de todo mundo.
 
-     PRIMEIRO na sequência, e envolto em try/catch por isso: falha de
+     PRIMEIRA na sequência, e envolta em try/catch por isso: falha de
      token do Meta não pode impedir a agência de faturar, e uma falha
-     aqui não pode impedir o relatório do cliente de sair. As três etapas
+     aqui não pode impedir o relatório do cliente de sair. As etapas
      são independentes de propósito. */
   if (rodar("recorrencia")) {
     try {
@@ -98,12 +99,34 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  /* --- 1. Sincronização ------------------------------------------- */
+  /* --- 1. Renovação preventiva dos tokens ---------------------------
+     ANTES do sync, e não depois: um token que vence hoje ainda serve
+     para trocar por outro agora, e não serviria mais amanhã. Rodar
+     depois do sync desperdiçaria a última janela útil.
+
+     Etapa própria e silenciosa na maioria dos dias — só age sobre quem
+     está a menos de 15 dias do vencimento. */
+  if (rodar("tokens")) {
+    try {
+      const dias = Number(searchParams.get("diasDeAntecedencia"));
+
+      resposta.tokens = await renovarTokensMeta({
+        diasDeAntecedencia:
+          Number.isInteger(dias) && dias > 0 && dias <= 60 ? dias : undefined,
+      });
+    } catch (error) {
+      resposta.tokens = {
+        erro: error instanceof Error ? error.message : "falha desconhecida",
+      };
+    }
+  }
+
+  /* --- 2. Sincronização ------------------------------------------- */
   if (rodar("sync")) {
     // `mode=month` porque a rodada diária também precisa capturar
     // reatribuições retroativas das plataformas.
     /* try/catch pelo mesmo motivo da etapa 0, que já tinha o dele: as
-       três etapas são independentes DE PROPÓSITO, e sem esta guarda a
+       etapas são independentes DE PROPÓSITO, e sem esta guarda a
        independência era só uma intenção no comentário. Uma exceção aqui
        — token do Meta expirado, `SUPABASE_SERVICE_ROLE_KEY` ausente,
        Google fora do ar — subia pela rota inteira e o relatório do
@@ -118,7 +141,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  /* --- 2. Preparo dos PDFs -------------------------------------------------- */
+  /* --- 3. Preparo dos PDFs -------------------------------------------------- */
   if (rodar("envio")) {
     // `?dia=N` permite conferir o preparo de um cliente sem esperar
     // chegar a data combinada. Protegido pelo mesmo CRON_SECRET, e a
@@ -147,8 +170,8 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  /* --- 3. Resumos semanais -------------------------------------------
-     Depois do sync, pela mesma razão da etapa 2: montar antes de
+  /* --- 4. Resumos semanais -------------------------------------------
+     Depois do sync, pela mesma razão da etapa 3: montar antes de
      sincronizar produziria um texto com os números de anteontem.
 
      Sem orçamento de tempo, ao contrário do PDF: aqui não sobe Chromium

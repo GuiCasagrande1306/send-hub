@@ -881,6 +881,14 @@ export interface IntegrationStatus {
   /** Saldo informado no painel, em centavos. null = nunca informado. */
   fundsCents: number | null;
   fundsRecordedAt: string | null;
+  /**
+   * Quando a autorização vence. Cópia legível de
+   * `integration_secrets.expires_at` — ver a migration 41 sobre por que
+   * não se lê a tabela de segredos aqui.
+   *
+   * `null` no Google é normal: o refresh token de lá não expira.
+   */
+  tokenExpiresAt: string | null;
 }
 
 /**
@@ -917,6 +925,13 @@ export async function getClientIntegrations(
       conversionActionType: null,
       fundsCents: null,
       fundsRecordedAt: null,
+      /* Vence em 9 dias no demo, para o aviso de renovação aparecer —
+         ele é invisível o ano inteiro e some justamente na hora de
+         demonstrar. */
+      tokenExpiresAt:
+        platform === "meta_ads"
+          ? new Date(Date.now() + 9 * 864e5).toISOString()
+          : null,
     }));
   }
 
@@ -924,7 +939,7 @@ export async function getClientIntegrations(
   const { data } = await supabase
     .from("client_integrations")
     .select(
-      "platform, external_account_id, display_name, last_synced_at, sync_error, billing_type, conversion_action_type, funds_cents, funds_recorded_at",
+      "platform, external_account_id, display_name, last_synced_at, sync_error, billing_type, conversion_action_type, funds_cents, funds_recorded_at, token_expires_at",
     )
     .eq("client_id", clientId);
 
@@ -943,6 +958,7 @@ export async function getClientIntegrations(
         (linha?.conversion_action_type as string) ?? null,
       fundsCents: (linha?.funds_cents as number) ?? null,
       fundsRecordedAt: (linha?.funds_recorded_at as string) ?? null,
+      tokenExpiresAt: (linha?.token_expires_at as string) ?? null,
     };
   });
 }
