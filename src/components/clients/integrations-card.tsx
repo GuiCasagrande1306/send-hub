@@ -391,7 +391,14 @@ function LinhaIntegracao({
                   ))}
                 </SelectContent>
               </Select>
-              <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
+              {/* `break-all` NÃO é enfeite. `efetivo` é uma lista de
+                  action_types colada por pontos —
+                  `offsite_conversion.fb_pixel_lead.onsite_conversion…` —
+                  sem um espaço sequer. Sem quebrar no meio da palavra
+                  ela vira uma linha indivisível, empurra a largura do
+                  diálogo e leva junto a linha do Instagram, cujo botão
+                  "Conectar" ficava cortado fora da borda. */}
+              <p className="mt-1.5 break-all font-mono text-2xs text-muted-foreground">
                 {efetivo}
               </p>
               <p className="mt-1 text-2xs text-muted-foreground">
