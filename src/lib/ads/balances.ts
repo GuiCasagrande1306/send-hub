@@ -89,6 +89,14 @@ export interface BalanceAlert extends BalanceForecast {
   accruedCents: number | null;
   /** Divisor usado no ritmo: dias com gasto na janela, no máximo 7. */
   diasDeRitmo: number;
+  /** Existe integração desta plataforma neste cliente. */
+  connected: boolean;
+  /**
+   * `null` quando não conectada. A distinção importa na tela: pós-paga
+   * não tem crédito a esgotar — "faltam N dias" ali seria número
+   * inventado —, enquanto não conectada é ausência de informação.
+   */
+  billingType: "prepaid" | "postpaid" | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -179,7 +187,7 @@ export async function getBalanceAlerts(): Promise<BalanceAlert[]> {
     clients,
     gastoPorConta,
     diasComGasto,
-    prePagas,
+    conectadas,
     saldos,
     saldosGoogle,
     fundos,
@@ -192,8 +200,13 @@ export async function getBalanceAlerts(): Promise<BalanceAlert[]> {
     for (const platform of ["meta_ads", "google_ads"] as const) {
       const chave = `${client.id}:${platform}`;
 
-      // Conta pós-paga não tem crédito a esgotar — nem entra na conta.
-      if (!prePagas.has(chave)) continue;
+      /* TODA combinação cliente × plataforma entra, inclusive as não
+         conectadas. Pular aqui era o motivo de a tela mostrar um cliente
+         de 34: quem não estava marcado como pré-pago simplesmente não
+         existia, indistinguível de conta sem problema. Quem decide o que
+         mostrar é a tela, que tem os três estados. */
+      const cobranca = conectadas.get(chave) ?? null;
+      const conectada = cobranca !== null;
 
       const burnRate = calcularRitmo(
         gastoPorConta.get(chave) ?? 0,
@@ -238,8 +251,25 @@ export async function getBalanceAlerts(): Promise<BalanceAlert[]> {
          saldo folgado simplesmente não existia na tela — indistinguível
          de "esqueci de configurar". O status diferencia; a ausência,
          não. */
+      /* Projetar só onde há crédito a esgotar. Numa pós-paga o saldo
+         não existe como conceito, e numa não conectada não há dado —
+         `projetar` devolveria `unknown`, que a tela leria como "falta
+         informar o saldo" e mandaria a pessoa procurar um campo que não
+         se aplica. */
+      const previsao =
+        cobranca === "prepaid"
+          ? projetar(balanceCents, burnRate, { unlimited })
+          : {
+              currentBalance: null,
+              burnRate,
+              daysLeft: null,
+              status: "unknown" as const,
+            };
+
       alertas.push({
-        ...projetar(balanceCents, burnRate, { unlimited }),
+        ...previsao,
+        connected: conectada,
+        billingType: cobranca,
         clientId: client.id,
         clientName: client.name,
         clientSlug: client.slug,
@@ -286,8 +316,12 @@ async function carregar(): Promise<{
    * conta que tem uma linha por plataforma no mesmo dia.
    */
   diasComGasto: Map<string, Set<string>>;
-  /** Chaves `clientId:platform` das contas pré-pagas. */
-  prePagas: Set<string>;
+  /**
+   * Tipo de cobrança por `clientId:platform`, para TODA integração
+   * ativa. Ausência da chave = plataforma não conectada naquele
+   * cliente, que é um estado diferente de pós-paga.
+   */
+  conectadas: Map<string, "prepaid" | "postpaid">;
   /** `balance` do Meta (acumulado a pagar), por `client_id`. */
   saldos: Map<string, ContaSaldo>;
   /** Saldo do Google vindo da API, por `client_id`. */
@@ -329,13 +363,18 @@ async function carregar(): Promise<{
       }
     }
 
-    // No demo todas são pré-pagas, senão a tela nasceria vazia e não
-    // haveria como avaliar a interface.
-    const prePagas = new Set<string>();
-    for (const c of demoClients) {
-      prePagas.add(`${c.id}:meta_ads`);
-      prePagas.add(`${c.id}:google_ads`);
-    }
+    /* O demo mistura os TRÊS estados de propósito, porque é isso que a
+       tela precisa distinguir: pré-paga com saldo, pós-paga sem crédito
+       a esgotar, e plataforma não conectada. Com tudo pré-pago, as duas
+       colunas ficavam idênticas e o traço nunca aparecia. */
+    const conectadas = new Map<string, "prepaid" | "postpaid">();
+    demoClients.forEach((c, i) => {
+      conectadas.set(`${c.id}:meta_ads`, i % 3 === 1 ? "postpaid" : "prepaid");
+      // Um em cada três fica sem Google, para o traço existir na tela.
+      if (i % 3 !== 2) {
+        conectadas.set(`${c.id}:google_ads`, "prepaid");
+      }
+    });
 
     /* Demo não chama a Graph API. Saldo determinístico a partir do id
        para a tela não mudar a cada refresh — número que dança sozinho
@@ -384,7 +423,7 @@ async function carregar(): Promise<{
       clients: demoClients,
       gastoPorConta: mapa,
       diasComGasto: dias,
-      prePagas,
+      conectadas,
       saldos,
       saldosGoogle,
       fundos,
@@ -410,13 +449,21 @@ async function carregar(): Promise<{
         .gte("metric_date", desdeISO),
       supabase
         .from("client_integrations")
-        .select("client_id, platform, funds_cents, funds_recorded_at")
-        .eq("billing_type", "prepaid")
+        /* SEM filtro de `billing_type`: a tela precisa distinguir três
+           estados — não conectada, pós-paga e pré-paga — e filtrar aqui
+           apagava os dois primeiros, deixando 33 de 34 clientes
+           invisíveis como se não existissem. */
+        .select(
+          "client_id, platform, funds_cents, funds_recorded_at, billing_type",
+        )
         .eq("is_active", true),
     ]);
 
-  const prePagas = new Set(
-    (integracoes ?? []).map((i) => `${i.client_id}:${i.platform}`),
+  const conectadas = new Map<string, "prepaid" | "postpaid">(
+    (integracoes ?? []).map((i) => [
+      `${i.client_id}:${i.platform}`,
+      (i.billing_type as "prepaid" | "postpaid") ?? "postpaid",
+    ]),
   );
 
   /* Saldo informado + a data de leitura, por conta. O desconto do gasto
@@ -487,7 +534,7 @@ async function carregar(): Promise<{
     clients: (clients ?? []) as Client[],
     gastoPorConta: mapa,
     diasComGasto: dias,
-    prePagas,
+    conectadas,
     saldos,
     saldosGoogle,
     fundos,
