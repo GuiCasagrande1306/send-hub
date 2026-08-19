@@ -48,7 +48,11 @@ export const DIAS_DE_ATENCAO = 7;
 /** Janela do ritmo de gasto. */
 const JANELA_DIAS = 7;
 
-export type BalanceSource = "manual" | "google_api" | "indisponivel";
+export type BalanceSource =
+  | "meta_api"
+  | "manual"
+  | "google_api"
+  | "indisponivel";
 
 /**
  * Estado da conta. Mais largo que crítico/atenção/saudável de propósito:
@@ -205,16 +209,31 @@ export async function getBalanceAlerts(): Promise<BalanceAlert[]> {
          de 34: quem não estava marcado como pré-pago simplesmente não
          existia, indistinguível de conta sem problema. Quem decide o que
          mostrar é a tela, que tem os três estados. */
-      const cobranca = conectadas.get(chave) ?? null;
-      const conectada = cobranca !== null;
+      const conectada = conectadas.has(chave);
+
+      /* QUEM DECIDE SE A CONTA É PRÉ-PAGA É A PLATAFORMA, não a coluna.
+         `client_integrations.billing_type` nasce "postpaid" e ninguém
+         classificou nada — a tela afirmava "Pós-paga" sobre 33 contas
+         que nunca foram olhadas. A Meta responde `is_prepay_account`, e
+         nas cinco contas medidas ele veio `true` em todas. A coluna vira
+         fallback: vale onde a API não respondeu. */
+      const saldoMetaPrevio =
+        platform === "meta_ads" ? saldos.get(client.id) : undefined;
+
+      const cobranca: "prepaid" | "postpaid" | null = !conectada
+        ? null
+        : saldoMetaPrevio
+          ? saldoMetaPrevio.isPrepay
+            ? "prepaid"
+            : "postpaid"
+          : (conectadas.get(chave) ?? "postpaid");
 
       const burnRate = calcularRitmo(
         gastoPorConta.get(chave) ?? 0,
         diasComGasto.get(chave)?.size ?? 0,
       );
 
-      const saldoMeta =
-        platform === "meta_ads" ? saldos.get(client.id) : undefined;
+      const saldoMeta = saldoMetaPrevio;
       const informado = fundos.get(chave);
 
       /* --- Saldo: caminho diferente por plataforma ----------------- */
@@ -231,17 +250,23 @@ export async function getBalanceAlerts(): Promise<BalanceAlert[]> {
         balanceCents = google?.balanceCents ?? null;
         unlimited = google?.unlimited ?? false;
         balanceSource = google ? "google_api" : "indisponivel";
+      } else if (saldoMeta?.availableCents !== null && saldoMeta !== undefined) {
+        /* DA API: `spend_cap − amount_spent`, já calculado em
+           `meta-balance.ts`. Vence a anotação manual porque não
+           envelhece — o `amount_spent` da Meta é a fonte que a própria
+           plataforma usa para cobrar. */
+        balanceCents = saldoMeta.availableCents;
+        balanceSource = "meta_api";
       } else {
-        /* Meta: âncora manual MENOS o gasto desde então. Só a leitura
-           inicial é manual; o desconto vem de `daily_metrics`, que
-           sincroniza todo dia.
+        /* Fallback manual: âncora informada MENOS o gasto desde então.
+           Só sobra para conta que a API não respondeu — token vencido,
+           conta sem `spend_cap`, Graph fora do ar.
 
-           `null` quando ninguém informou — e não zero, como estava
-           antes. Zero significa "acabou" e disparava crítico numa conta
-           que podia estar cheia; `null` faz a tela pedir o número. */
+           `null` quando ninguém informou — e não zero. Zero significa
+           "acabou" e dispararia crítico numa conta que pode estar
+           cheia. */
         balanceCents = informado
-          ? // Piso em zero: saldo estourado é zero, não dívida.
-            Math.max(0, informado.cents - (gastoDesdeRecarga.get(chave) ?? 0))
+          ? Math.max(0, informado.cents - (gastoDesdeRecarga.get(chave) ?? 0))
           : null;
         balanceSource = informado ? "manual" : "indisponivel";
       }
@@ -387,7 +412,12 @@ async function carregar(): Promise<{
         return [
           c.id,
           {
-            balanceCents: (semente % 801) * 100,
+            /* O disponível é o que a tela usa agora; `balanceCents`
+               continua aqui só como o acumulado a pagar, que a Meta
+               devolve e que NÃO é saldo. */
+            availableCents: (semente % 801) * 100,
+            isPrepay: true,
+            balanceCents: (semente % 37) * 100,
             currency: "BRL",
             fundingType: 2,
             fundingLabel: "Saldo pré-pago (demo)",

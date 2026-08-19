@@ -94,16 +94,18 @@ export default async function BalanceAlertsPage() {
         </p>
 
         <p className="mt-1.5 text-xs text-muted-foreground">
-          <strong>Meta:</strong> saldo informado na recarga menos o gasto desde
-          então. O desconto vem da sincronização diária, então o número se
-          mantém sozinho — só a recarga precisa ser anotada, em Contas de
-          mídia na página do cliente.
+          <strong>Meta:</strong> lido da API, do crédito já aportado menos o
+          total gasto (<code>spend_cap − amount_spent</code>). Não precisa ser
+          anotado à mão, e é a própria Meta quem diz se a conta tem carteira.
         </p>
         <p className="mt-1 text-2xs text-muted-foreground">
-          A Graph API não expõe a carteira: seu campo <code>balance</code> é o
-          acumulado a pagar, que SOBE conforme veicula. Numa conta medida, ele
-          devolvia R$ 23,34 enquanto o saldo real era R$ 341,77 — usá-lo
-          inverteria o alerta.
+          O campo <code>balance</code> NÃO é usado: ele é o acumulado a pagar e
+          SOBE conforme veicula. Numa conta medida devolvia R$ 23,34 com
+          R$ 481,64 disponíveis — projetar por ele inverteria o alerta.
+        </p>
+        <p className="mt-1 text-2xs text-warning">
+          O número da Meta ainda não foi conferido contra o Gerenciador de
+          Anúncios. Antes de usá-lo para decidir recarga, compare uma conta.
         </p>
 
         <p className="mt-3 text-xs text-muted-foreground">
