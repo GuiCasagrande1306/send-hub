@@ -29,13 +29,25 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
        nascia "postpaid" e fazia a tela afirmar pós-paga sobre conta que
        ninguém tinha classificado.
 
-     • `spend_cap − amount_spent` DÁ o disponível. Em conta pré-paga o
-       `spend_cap` é o total já creditado, não um teto de gasto. Medido:
-       Camilo Scooters 922,42 − 440,78 = R$ 481,64; Citolab 4.526,38 −
-       4.397,57 = R$ 128,81; Loro Gravatá e Bini, ambas esgotadas, deram
-       ~R$ 0. O par nunca tinha sido testado — as tentativas anteriores
-       foram em `prepay_balance`, `balance_percent_used` e `credit_limit`,
-       que de fato não existem (a API recusa os três com erro #100).
+     • `spend_cap − amount_spent` é um PISO do disponível, não o
+       disponível. Conferido contra o Gerenciador de Anúncios nas cinco
+       contas, no mesmo dia:
+
+           conta              painel      cap−gasto    erro
+           Camilo Scooters    548,25      481,64       −66,61
+           Citolab            146,62      128,81       −17,81
+           Óticas Xavier       51,24       45,01        −6,23
+           Loro Lanches         0,00        0,00            0
+           Bini Embalagens      0,00        0,00            0
+
+       Erra 12% a 14% nas contas com saldo, e SEMPRE PARA MENOS. Somar
+       `balance` não corrige: acerta Citolab (147,57 contra 146,62) e
+       erra 43 reais no Camilo. Não achei modelo que feche nas cinco.
+
+       Por que mesmo assim é usado: para um alerta de "recarregue antes
+       de acabar", errar para menos é o lado seguro — antecipa o aviso.
+       Errar para mais deixaria o anúncio cair sem avisar. Por isso o
+       número é apresentado como MÍNIMO, nunca como saldo.
 
    O que continua verdadeiro: `balance` NÃO é saldo. Nas mesmas cinco
    contas ele voltou entre R$ 0,00 e R$ 23,32, sem relação com o

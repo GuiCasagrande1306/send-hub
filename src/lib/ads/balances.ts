@@ -250,11 +250,12 @@ export async function getBalanceAlerts(): Promise<BalanceAlert[]> {
         balanceCents = google?.balanceCents ?? null;
         unlimited = google?.unlimited ?? false;
         balanceSource = google ? "google_api" : "indisponivel";
-      } else if (saldoMeta?.availableCents !== null && saldoMeta !== undefined) {
-        /* DA API: `spend_cap − amount_spent`, já calculado em
-           `meta-balance.ts`. Vence a anotação manual porque não
-           envelhece — o `amount_spent` da Meta é a fonte que a própria
-           plataforma usa para cobrar. */
+      } else if (saldoMeta?.availableCents != null) {
+        /* PISO vindo da API, não o saldo exato — ver a medição em
+           `meta-balance.ts`. Vence a anotação manual mesmo assim: um
+           piso que se atualiza sozinho todo dia é mais útil que um
+           número exato que envelhece desde a última vez que alguém
+           lembrou de anotar. */
         balanceCents = saldoMeta.availableCents;
         balanceSource = "meta_api";
       } else {

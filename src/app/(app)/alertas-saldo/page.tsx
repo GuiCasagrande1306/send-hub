@@ -94,18 +94,17 @@ export default async function BalanceAlertsPage() {
         </p>
 
         <p className="mt-1.5 text-xs text-muted-foreground">
-          <strong>Meta:</strong> lido da API, do crédito já aportado menos o
-          total gasto (<code>spend_cap − amount_spent</code>). Não precisa ser
-          anotado à mão, e é a própria Meta quem diz se a conta tem carteira.
-        </p>
-        <p className="mt-1 text-2xs text-muted-foreground">
-          O campo <code>balance</code> NÃO é usado: ele é o acumulado a pagar e
-          SOBE conforme veicula. Numa conta medida devolvia R$ 23,34 com
-          R$ 481,64 disponíveis — projetar por ele inverteria o alerta.
+          <strong>Meta:</strong> lido da API (<code>spend_cap − amount_spent</code>),
+          sem precisar anotar nada. É a própria Meta quem diz se a conta tem
+          carteira.
         </p>
         <p className="mt-1 text-2xs text-warning">
-          O número da Meta ainda não foi conferido contra o Gerenciador de
-          Anúncios. Antes de usá-lo para decidir recarga, compare uma conta.
+          O número da Meta é um <strong>mínimo</strong>, não o saldo exato.
+          Conferido contra o Gerenciador nas contas conectadas, ele fica
+          entre 12% e 14% ABAIXO do real — R$ 481,64 onde o painel mostrava
+          R$ 548,25. O erro é sempre para menos, então o alerta antecipa em
+          vez de atrasar. Para conferir o valor exato antes de recarregar,
+          abra o Gerenciador.
         </p>
 
         <p className="mt-3 text-xs text-muted-foreground">
@@ -244,7 +243,10 @@ function Celula({
           ? "Sem teto"
           : alerta.currentBalance === null
             ? "Saldo não informado"
-            : formatCurrency(alerta.currentBalance)}
+            : /* "≥" porque o número da Meta é um piso: o disponível real
+                 é esse ou mais. Escondê-lo faria a tela afirmar precisão
+                 que a medição não sustenta. */
+              `${alerta.balanceSource === "meta_api" ? "≥ " : ""}${formatCurrency(alerta.currentBalance)}`}
       </span>
 
       <span className="text-2xs text-muted-foreground">{legenda(alerta)}</span>
