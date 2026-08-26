@@ -261,8 +261,23 @@ export function metricaIndefinida(key: MetricKey, t: MetricTotals): boolean {
       return t.origem.conversions === 0;
     case "aov":
       return t.conversions === 0;
+    /* ROAS SEM RECEITA É "—", NÃO "0,00x", e a razão é a mesma do
+       parágrafo acima, um passo adiante: a divisão existe, mas o número
+       não afirma nada que já não esteja dito melhor ao lado. Um
+       "ROAS 0,00x" ACUSA o investimento de não ter voltado nada, quando
+       o que os dados dizem é que nada foi medido.
+
+       Delivery é onde isso acontece — pedido fechado no iFood ou no
+       WhatsApp não passa pelo pixel do site. NA SEND, HOJE, NÃO
+       ACONTECE: medido em 26/08/2026, as sete contas de delivery com
+       gasto têm todas receita rastreada, de 10,90x a 49,55x, e as
+       outras quatro não gastaram nada — essas caem no ramo de cima.
+       Esta linha não está segurando ninguém agora. Ela fica porque o
+       dia em que uma conta de delivery migrar os pedidos para o
+       WhatsApp, o relatório dela vai passar a acusar o investimento em
+       vez de dizer que a medição parou. */
     case "roas":
-      return t.origem.spendCents === 0;
+      return t.origem.spendCents === 0 || t.origem.revenueCents === 0;
     case "ctr":
     case "cpm":
       return t.impressions === 0;
