@@ -1,4 +1,8 @@
-import { deriveMetric, type MetricTotals } from "@/lib/metrics/kpi";
+import {
+  deriveMetric,
+  metricaIndefinida,
+  type MetricTotals,
+} from "@/lib/metrics/kpi";
 import {
   formatCurrency,
   formatDecimal,
@@ -61,11 +65,24 @@ const dinheiro = (cents: number) => formatCurrency(Math.round(cents));
    É a mesma divisão de `PADRAO_POR_SEGMENTO` em goal-metric.ts. */
 function blocoComReceita(rotuloConversao: string): Bloco["linhas"] {
   return ({ totals }) => [
-    `💵Ticket Médio: ${dinheiro(deriveMetric("aov", totals))}`,
+    /* RAZÃO SEM DENOMINADOR SOME, que é a regra que este arquivo já
+       declara em `Linha` e não estava aplicando às três razões. Semana
+       sem nenhuma venda produzia "Ticket Médio: R$ 0,00" e "ROAS: 0,00"
+       logo abaixo de "Vendas: 0" — o zero de cima é fato, os de baixo
+       são divisões por zero fingindo de resultado ruim.
+
+       Sumir é melhor que "—" AQUI porque a linha acima já diz o que
+       aconteceu: com "Vendas: 0" no texto, um traço só ocuparia espaço
+       repetindo a mesma informação em pior português. */
+    metricaIndefinida("aov", totals)
+      ? null
+      : `💵Ticket Médio: ${dinheiro(deriveMetric("aov", totals))}`,
     `🛒${rotuloConversao}: ${formatNumber(Math.round(totals.conversions))}`,
     `💰Faturamento: ${dinheiro(totals.revenueCents)}`,
     `💵 Valor investido: ${dinheiro(totals.spendCents)}`,
-    `📊ROAS: ${formatDecimal(deriveMetric("roas", totals))}`,
+    metricaIndefinida("roas", totals)
+      ? null
+      : `📊ROAS: ${formatDecimal(deriveMetric("roas", totals))}`,
   ];
 }
 
@@ -75,7 +92,14 @@ function blocoSemReceita(
 ): Bloco["linhas"] {
   return ({ totals }) => [
     `📩${rotuloConversao}: ${formatNumber(Math.round(totals.conversions))}`,
-    `💵${rotuloCusto}: ${dinheiro(deriveMetric("cpa", totals))}`,
+    /* Mesma regra da linha do ticket médio, e o caso que de fato ocorre
+       na carteira da Send: medido em 26/08/2026, das 55 semanas com
+       investimento em segmento sem receita, 2 fecharam sem nenhuma
+       conversão — presença local B e captação C. As duas receberiam "Custo por
+       lead: R$ 0,00", que num resumo de WhatsApp lê como custo baixo. */
+    metricaIndefinida("cpa", totals)
+      ? null
+      : `💵${rotuloCusto}: ${dinheiro(deriveMetric("cpa", totals))}`,
     `💵 Valor investido: ${dinheiro(totals.spendCents)}`,
   ];
 }

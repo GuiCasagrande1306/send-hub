@@ -213,12 +213,20 @@ export function buildGroupCaption(payload: ReportPayload): string {
   const results = find("results");
   const cpa = find("cpa");
 
+  const frase = !spend || !results
+    ? "Os números do período estão no PDF em anexo."
+    : cpa && !cpa.indefinido
+      ? `Investimos *${spend.formatted}* e geramos *${results.formatted} resultados* a um custo de *${cpa.formatted}* cada.`
+      : `Investimos *${spend.formatted}* e geramos *${results.formatted} resultados*.`;
+
   const linhas = [
     "Fala equipe! 🚀 Segue o relatório de performance fechado.",
     "",
-    spend && results && cpa
-      ? `Investimos *${spend.formatted}* e geramos *${results.formatted} resultados* a um custo de *${cpa.formatted}* cada.`
-      : "Os números do período estão no PDF em anexo.",
+    /* SEM CONVERSÃO, A ORAÇÃO DO CUSTO SAI — não vira "*—* cada". O
+       traço serve num cartão, onde a coluna sozinha diz o que falta;
+       no meio de uma frase ele lê como falha do sistema. Frase mais
+       curta diz menos e não mente. */
+    frase,
     "",
     "Baixe o PDF para ver os anúncios que mais performaram! 📊",
   ];
@@ -239,6 +247,17 @@ export function buildWhatsAppSummary(payload: ReportPayload): string {
     return ` ${arrow} ${Math.abs(kpi.deltaPercent).toFixed(1).replace(".", ",")}%`;
   };
 
+  /* Razão sem denominador vira FRASE, não traço. "*—*" no meio de uma
+     mensagem de WhatsApp lê como falha do sistema, e some justamente a
+     informação que importa: não houve conversão no período. Antes daqui
+     saía "*R$ 0,00* ▼ 100,0%", que era pior — dizia o contrário do que
+     aconteceu. */
+  const linhaCpa = !cpa
+    ? ""
+    : cpa.indefinido
+      ? "📉 Custo por resultado: *sem conversões no período*"
+      : `📉 Custo por resultado: *${cpa.formatted}*${trendWord(cpa)}`;
+
   const period = new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
     month: "2-digit",
@@ -252,7 +271,7 @@ export function buildWhatsAppSummary(payload: ReportPayload): string {
     "",
     spend ? `💰 Investimento: *${spend.formatted}*${trendWord(spend)}` : "",
     results ? `🎯 Resultados: *${results.formatted}*${trendWord(results)}` : "",
-    cpa ? `📉 Custo por resultado: *${cpa.formatted}*${trendWord(cpa)}` : "",
+    linhaCpa,
     "",
     "O relatório completo, com a análise e os criativos que rodaram, está no PDF em anexo.",
   ];

@@ -34,15 +34,15 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
        contas, no mesmo dia:
 
            conta              painel      cap−gasto    erro
-           Camilo Scooters    548,25      481,64       −66,61
-           Citolab            146,62      128,81       −17,81
-           Óticas Xavier       51,24       45,01        −6,23
-           Loro Lanches         0,00        0,00            0
-           Bini Embalagens      0,00        0,00            0
+           captação G        548,25      481,64       −66,61
+           captação C        146,62      128,81       −17,81
+           captação A        51,24       45,01        −6,23
+           delivery L        0,00        0,00            0
+           captação H        0,00        0,00            0
 
        Erra 12% a 14% nas contas com saldo, e SEMPRE PARA MENOS. Somar
-       `balance` não corrige: acerta Citolab (147,57 contra 146,62) e
-       erra 43 reais no Camilo. Não achei modelo que feche nas cinco.
+       `balance` não corrige: acerta captação C (147,57 contra 146,62) e
+       erra 43 reais na captação G. Não achei modelo que feche nas cinco.
 
        Por que mesmo assim é usado: para um alerta de "recarregue antes
        de acabar", errar para menos é o lado seguro — antecipa o aviso.
