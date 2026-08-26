@@ -134,6 +134,9 @@ const styles = StyleSheet.create({
   kpiValue: { fontSize: 20, fontFamily: "Helvetica-Bold", marginTop: 7 },
   kpiDelta: { fontSize: 8, marginTop: 6 },
   kpiPrev: { fontSize: 7.5, color: INK_SOFT, marginTop: 2 },
+  /* O selo da campanha de origem. Fica ACIMA do delta e abaixo do
+     número, porque é qualificação do número, não da variação. */
+  kpiOrigem: { fontSize: 6.5, color: INK_SOFT, marginTop: 1 },
 
   /* --------------------------- Gráfico -------------------------- */
   chartFrame: {
@@ -381,6 +384,7 @@ function CoverSummary({ payload }: { payload: ReportPayload }) {
           <View key={kpi.key} style={styles.kpiCard}>
             <Text style={styles.kpiLabel}>{kpi.label}</Text>
             <Text style={styles.kpiValue}>{kpi.formatted}</Text>
+            <SeloDeOrigem kpi={kpi} />
             <DeltaText kpi={kpi} />
           </View>
         ))}
@@ -390,6 +394,28 @@ function CoverSummary({ payload }: { payload: ReportPayload }) {
         os {payload.meta.days} dias imediatamente anteriores.
       </Text>
     </View>
+  );
+}
+
+/**
+ * "de 1 campanha" — o recorte que o número usou.
+ *
+ * SEM ISTO O NÚMERO NÃO FECHA, e é o tipo de discrepância que destrói a
+ * confiança no relatório inteiro: a capa diz o investimento da conta
+ * inteira, e o card diz um custo por resultado menor. Quem divide na
+ * calculadora acha outro número. O selo é a diferença entre "o
+ * relatório está errado" e "o custo é da campanha que vende".
+ *
+ * Só aparece quando houve recorte — numa conta em que toda campanha é de
+ * venda, `origem` é nulo e dizer "de 3 campanhas" sugeriria um corte que
+ * não houve. São 9 das 21 contas da Send.
+ */
+function SeloDeOrigem({ kpi }: { kpi: ReportPayload["kpis"][number] }) {
+  if (kpi.origem === null) return null;
+  return (
+    <Text style={styles.kpiOrigem}>
+      de {kpi.origem} {kpi.origem === 1 ? "campanha" : "campanhas"}
+    </Text>
   );
 }
 
@@ -601,6 +627,7 @@ function KpiCards({ kpis }: { kpis: ReportPayload["kpis"] }) {
             <View key={kpi.key} style={styles.kpiCard}>
               <Text style={styles.kpiLabel}>{kpi.label}</Text>
               <Text style={styles.kpiValue}>{kpi.formatted}</Text>
+              <SeloDeOrigem kpi={kpi} />
               <DeltaText kpi={kpi} />
             </View>
           ))}

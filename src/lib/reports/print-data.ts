@@ -1,5 +1,6 @@
 import "server-only";
 
+import { tiposDeConversaoDoCliente } from "@/lib/ads/conversao-do-cliente";
 import { isDemoMode } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
@@ -114,6 +115,7 @@ export async function getPrintReportData(
       periodStart,
       periodEnd,
       await rotulosDoTemplate(client),
+      await tiposDeConversaoDoCliente(clientId),
     );
   }
 
@@ -155,6 +157,7 @@ export async function getPrintReportData(
     periodStart,
     periodEnd,
     await rotulosDoTemplate(client),
+    await tiposDeConversaoDoCliente(clientId),
   );
 }
 
@@ -166,9 +169,10 @@ function assemble(
   periodStart: string,
   periodEnd: string,
   rotulos: Partial<Record<MetricKey, string>> = {},
+  tiposDeConversao: string[] = [],
 ): PrintReportData {
-  const currentTotals = sumMetrics(current);
-  const previousTotals = sumMetrics(previous);
+  const currentTotals = sumMetrics(current, tiposDeConversao);
+  const previousTotals = sumMetrics(previous, tiposDeConversao);
 
   return {
     client,
