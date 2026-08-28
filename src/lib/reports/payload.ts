@@ -12,6 +12,8 @@ import {
   type PlatformSplit,
   type TrendPoint,
 } from "@/lib/metrics/kpi";
+import { formatPeriod } from "@/lib/format";
+import { mensagemDoCliente } from "./mensagem-do-cliente";
 import { sessionSource, type ReportSource } from "./source";
 import {
   buildPlatformDetail,
@@ -201,39 +203,55 @@ export async function buildReportPayload(options: {
  * definem a conta vêm no corpo da mensagem.
  */
 /**
- * Legenda que acompanha o PDF quando o destino é um GRUPO.
+ * Legenda que acompanha o PDF no WhatsApp.
  *
- * Tom diferente do resumo formal: grupo tem a equipe do cliente junto,
- * e a mensagem precisa fazer alguém abrir o anexo. Os três números vêm
- * no corpo porque muita gente lê no celular e nunca abre o PDF — se o
- * essencial só estiver no arquivo, não foi comunicado.
+ * SEM NÚMERO NENHUM, e a ausência é o recurso. A legenda dizia
+ * "Investimos X e geramos Y resultados a um custo de Z cada", com X e Y
+ * da conta inteira e Z da campanha de origem desde a migration 42 — os
+ * três não fechavam entre si.
+ *
+ * Medido na carteira da Send em 28/08/2026, nas 20 contas ativas com
+ * investimento e resultado: SETE mandavam uma legenda que não fecha na
+ * calculadora. A pior, presença local A, dizia R$22,60 onde a conta
+ * inteira dá R$48,83.
+ *
+ * O PDF explica o recorte com o selo "de N campanhas"; um texto de
+ * WhatsApp não tem onde pôr nota de rodapé. Então a mensagem para de
+ * ter número: ela anuncia o anexo e sai da frente. Uma legenda sem
+ * número não tem como discordar do documento que acompanha — a classe
+ * inteira de defeito deixa de existir, em vez de ser consertada de novo
+ * a cada métrica nova. Ver `mensagem-do-cliente.ts`.
+ *
+ * SEM RAMO PARA SNAPSHOT ANTIGO, e ele pôde sumir: o que restou vem de
+ * `meta`, que todo payload gravado sempre teve. O caminho que remontava
+ * a mensagem a partir dos KPIs existia só para os números.
  */
-export function buildGroupCaption(payload: ReportPayload): string {
-  const find = (key: MetricKey) => payload.kpis.find((k) => k.key === key);
-
-  const spend = find("spend");
-  const results = find("results");
-  const cpa = find("cpa");
-
-  const frase = !spend || !results
-    ? "Os números do período estão no PDF em anexo."
-    : cpa && !cpa.indefinido
-      ? `Investimos *${spend.formatted}* e geramos *${results.formatted} resultados* a um custo de *${cpa.formatted}* cada.`
-      : `Investimos *${spend.formatted}* e geramos *${results.formatted} resultados*.`;
-
-  const linhas = [
-    "Fala equipe! 🚀 Segue o relatório de performance fechado.",
-    "",
-    /* SEM CONVERSÃO, A ORAÇÃO DO CUSTO SAI — não vira "*—* cada". O
-       traço serve num cartão, onde a coluna sozinha diz o que falta;
-       no meio de uma frase ele lê como falha do sistema. Frase mais
-       curta diz menos e não mente. */
-    frase,
-    "",
-    "Baixe o PDF para ver os anúncios que mais performaram! 📊",
-  ];
-
-  return linhas.filter((l, i) => l !== "" || i > 0).join("\n");
+export function buildGroupCaption(
+  payload: ReportPayload,
+  /**
+   * O texto gravado em `report_message_settings`.
+   *
+   * Buscado NA HORA DO ENVIO, não congelado no snapshot: um relatório
+   * que o cron preparou às 6h20 e alguém despacha às 15h sai com a
+   * mensagem vigente às 15h. Se o texto mudou no meio, foi porque
+   * alguém quis — e a versão nova é a que a agência quer dizer.
+   *
+   * Sem valor, cai no de fábrica. É o que mantém o caminho de teste e a
+   * prévia funcionando sem ida ao banco.
+   */
+  template?: string,
+): string {
+  return mensagemDoCliente(
+    {
+      periodoLabel: formatPeriod(
+        payload.meta.periodStart,
+        payload.meta.periodEnd,
+      ),
+      dias: payload.meta.days,
+      cliente: payload.client.name,
+    },
+    template,
+  );
 }
 
 export function buildWhatsAppSummary(payload: ReportPayload): string {

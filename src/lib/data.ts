@@ -2,7 +2,10 @@ import "server-only";
 
 import { isDemoMode } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { tiposDeConversaoDoCliente } from "@/lib/ads/conversao-do-cliente";
+import {
+  tiposDeConversaoDaCarteira,
+  tiposDeConversaoDoCliente,
+} from "@/lib/ads/conversao-do-cliente";
 import { buildTrend, previousPeriod, sumMetrics } from "@/lib/metrics/kpi";
 import { buildGoalProgress, periodElapsed } from "@/lib/metrics/goals";
 import {
@@ -299,6 +302,24 @@ export interface ClientWithGoal {
   computedResults: number;
   computedRevenueCents: number;
   /**
+   * Os mesmos totais contados só nas CAMPANHAS DE ORIGEM.
+   *
+   * Custo e retorno saem daqui, porque é daqui que o PDF os tira. Sem
+   * isto a estação de comando mostra um número no cartão e o arquivo
+   * que ela gera imprime outro — medido na carteira da Send em
+   * 28/08/2026: sete das vinte contas ativas divergiam, a pior delas
+   * dizendo R$22,60 onde a conta inteira dá R$48,83.
+   *
+   * O VOLUME NÃO USA. `computedResults` e `computedRevenueCents`
+   * continuam sendo da conta inteira: o pedido que veio da campanha de
+   * alcance é pedido de verdade.
+   */
+  computedOrigem: {
+    spendCents: number;
+    conversions: number;
+    revenueCents: number;
+  };
+  /**
    * O indicador desta conta. Resolvido no servidor porque depende da
    * unidade GRAVADA na meta, não só do segmento do cliente.
    */
@@ -307,6 +328,17 @@ export interface ClientWithGoal {
   computedGoalValue: number;
   /** Série de gasto no período da meta, para a sparkline do card. */
   trend: number[];
+  /**
+   * Quantas linhas de `daily_metrics` a janela tem.
+   *
+   * ZERO LINHA E ZERO REAL SÃO COISAS DIFERENTES: "a conta não gastou"
+   * e "este período nunca foi sincronizado" produzem o mesmo R$ 0,00, e
+   * só o segundo é motivo para não enviar relatório nenhum. Sem este
+   * número a estação de comando é cega na janela inicial, e um clique
+   * manda ao cliente um PDF zerado afirmando que ele não investiu nada
+   * no mês.
+   */
+  linhasDeMetrica: number;
   /**
    * A JANELA QUE FOI SOMADA — não a que alguém escolheu numa tela.
    *
@@ -346,9 +378,13 @@ export async function getClientsWithGoals(
 ): Promise<ClientWithGoal[]> {
   const periodo = month ? intervaloDoMes(month) : null;
 
-  const [clients, goals] = await Promise.all([
+  /* Os tipos de conversão da CARTEIRA INTEIRA em duas consultas, antes
+     do laço. Dentro dele seriam duas por conta — 70 consultas em 588ms
+     contra 2 em 110ms, medido em 28/08/2026. */
+  const [clients, goals, tiposPorCliente] = await Promise.all([
     getClients(agency, opts),
     periodo ? getGoalsForMonth(periodo.start) : getCurrentGoals(),
+    tiposDeConversaoDaCarteira(),
   ]);
 
   return Promise.all(
@@ -359,10 +395,21 @@ export async function getClientsWithGoals(
          Do contrário, um mês sem meta cairia no mês corrente e o card
          mostraria número de agosto sob o rótulo de julho. */
       const start = periodo?.start ?? goal?.period_start ?? monthStartISO();
-      const end = periodo?.end ?? goal?.period_end ?? todayISO();
+      /* NUNCA ALÉM DE HOJE, e isso é rótulo, não aritmética.
+         ---------------------------------------------------------------
+         A meta vigente vai até o último dia do mês, então em 28/08 esta
+         janela terminava em 31/08. A soma não muda — não há linha de
+         dia que não aconteceu —, mas `period` é o que a estação de
+         comando usa para ABRIR, e ela carimba a janela na capa do PDF e
+         na mensagem do WhatsApp. Sem truncar, quem gerasse sem trocar o
+         período mandaria ao cliente o mês inteiro com três dias que
+         ainda não existiam: o mês fechado, anunciado antes de fechar. */
+      const fimBruto = periodo?.end ?? goal?.period_end ?? todayISO();
+      const hoje = todayISO();
+      const end = fimBruto > hoje ? hoje : fimBruto;
 
       const rows = await getMetrics(client.id, start, end);
-      const totals = sumMetrics(rows);
+      const totals = sumMetrics(rows, tiposPorCliente.get(client.id));
 
       /* O segmento diz o padrão; a meta gravada diz a verdade. Sem meta
          no período cai no padrão do segmento, que é o que o card sem
@@ -376,8 +423,14 @@ export async function getClientsWithGoals(
         computedSpendCents: totals.spendCents,
         computedResults: totals.conversions,
         computedRevenueCents: totals.revenueCents,
+        computedOrigem: {
+          spendCents: totals.origem.spendCents,
+          conversions: totals.origem.conversions,
+          revenueCents: totals.origem.revenueCents,
+        },
         computedGoalValue: goalExecutedFrom(metric, totals),
         trend: buildTrend(rows).map((p) => p.spend),
+        linhasDeMetrica: rows.length,
         period: { start, end },
         progress: buildGoalProgress({
           goal,

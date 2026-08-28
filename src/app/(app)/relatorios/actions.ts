@@ -6,6 +6,12 @@ import { z } from "zod";
 import { isDemoMode } from "@/lib/env";
 import { getClients, getReports } from "@/lib/data";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { formatPeriod } from "@/lib/format";
+import { getMensagemDoCliente } from "@/lib/reports/mensagem-settings";
+import {
+  MARCADORES,
+  mensagemDoCliente,
+} from "@/lib/reports/mensagem-do-cliente";
 import { createSupabaseServerClient, getCurrentUser } from "@/lib/supabase/server";
 import { buildGroupCaption } from "@/lib/reports/payload";
 import { sendFromUser, sendReportFromUser } from "@/lib/whatsapp/session";
@@ -26,86 +32,21 @@ export interface EnvioPendente {
 
 /* ------------------------------------------------------------------ */
 /* Rascunho da análise, por IA                                         */
-/* ------------------------------------------------------------------ */
-
-const analiseSchema = z.object({
-  clientSlug: z.string().min(1),
-  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-});
 
 export type AnaliseResult =
   | { ok: true; insights: string; nextSteps: string[] }
   | { ok: false; error: string };
 
-/**
- * Escreve um rascunho da leitura do time a partir dos números do período.
- *
- * Monta o MESMO payload que o PDF usa — ver `analise-ia.ts` para o
- * porquê. A leitura passa por `getClientBySlug`, que respeita a RLS:
- * um colaborador não gera análise de conta alheia.
- *
- * Devolve o erro como VALOR e não como exceção: a falha aqui é sempre
- * algo que a pessoa precisa ler (falta a chave, o período está zerado,
- * o modelo recusou), e uma exceção viraria um toast genérico.
- */
-export async function gerarAnaliseIA(input: {
-  clientSlug: string;
-  periodStart: string;
-  periodEnd: string;
-}): Promise<AnaliseResult> {
-  const parsed = analiseSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Período inválido." };
-
-  const { clientSlug, periodStart, periodEnd } = parsed.data;
-  if (periodEnd < periodStart) {
-    return { ok: false, error: "O fim do período é anterior ao início." };
-  }
-
-  const { getClientBySlug, getTemplateForClient } = await import("@/lib/data");
-  const { buildReportPayload } = await import("@/lib/reports/payload");
-  const { gerarAnalise, AnaliseIndisponivel } = await import(
-    "@/lib/reports/analise-ia"
+/** Dias que a janela cobre, contando as duas pontas. */
+function diasEntre(inicio: string, fim: string): number {
+  return (
+    Math.round(
+      (Date.parse(`${fim}T00:00:00Z`) - Date.parse(`${inicio}T00:00:00Z`)) /
+        86_400_000,
+    ) + 1
   );
-
-  const client = await getClientBySlug(clientSlug);
-  if (!client) {
-    return { ok: false, error: "Cliente não encontrado ou sem permissão." };
-  }
-
-  const template = await getTemplateForClient(client);
-  if (!template) return { ok: false, error: "Nenhum template configurado." };
-
-  try {
-    const payload = await buildReportPayload({
-      client,
-      template,
-      periodStart,
-      periodEnd,
-    });
-
-    const { insights, nextSteps } = await gerarAnalise(payload);
-    return { ok: true, insights, nextSteps };
-  } catch (erro) {
-    if (erro instanceof AnaliseIndisponivel) {
-      return { ok: false, error: erro.message };
-    }
-    return {
-      ok: false,
-      error:
-        erro instanceof Error
-          ? `Falha ao gerar a análise: ${erro.message}`
-          : "Falha ao gerar a análise.",
-    };
-  }
 }
 
-/**
- * Relatórios gerados e ainda não enviados.
- *
- * A leitura passa por `getReports`, que usa RLS: um colaborador só vê
- * os relatórios das contas dele. A tela não filtra nada à mão.
- */
 export async function listarPendentes(): Promise<EnvioPendente[]> {
   const [reports, clients] = await Promise.all([getReports(), getClients()]);
 
@@ -241,15 +182,59 @@ export async function enviarRelatorio(
     return { ok: false, error: "Não foi possível assinar a URL do PDF." };
   }
 
-  await supabase
+  /* RESERVA ATÔMICA, e é ela que impede o envio em dobro.
+     -----------------------------------------------------------------
+     O ciclo era ler, conferir o status e só então gravar 'sending' —
+     sem condição no update e sem olhar quantas linhas mudaram. Nada
+     reservava a linha. O `useTransition` de cada botão protege UM
+     componente, não duas abas nem duas pessoas despachando a mesma
+     fila, e não há desfazer para um PDF que chegou duas vezes no grupo
+     do cliente.
+
+     Aqui a condição vai no WHERE: só sai de 'ready' ou 'failed'. Quem
+     chegar em segundo casa zero linha, `count` volta 0, e o envio nem
+     começa — é o banco serializando, não a aplicação torcendo.
+
+     'sending' NÃO entra na lista de propósito: quem está em envio ou
+     está saindo agora (e duplicar seria o defeito) ou está preso. */
+  const { error: erroReserva, count: reservadas } = await supabase
     .from("report_history")
-    .update({ status: "sending" })
-    .eq("id", reportId);
+    .update({ status: "sending" }, { count: "exact" })
+    .eq("id", reportId)
+    .in("status", ["ready", "failed"]);
+
+  /* ⚠️ `!== 1`, E NÃO `=== 0`. Quando o PATCH falha de verdade — 5xx do
+     PostgREST, timeout, conexão caída — `count` volta `null`, e
+     `null === 0` é falso: a função seguiria para o envio sem ter
+     reservado nada. Seria fail-open no único caminho em que o banco não
+     respondeu, o oposto do que a reserva promete. */
+  if (erroReserva || reservadas !== 1) {
+    return {
+      ok: false,
+      error: erroReserva
+        ? `Não deu para reservar o envio: ${erroReserva.message}`
+        : "Este período já está sendo enviado agora — confira o grupo antes de tentar de novo.",
+    };
+  }
+
+  /* O texto gravado, buscado AGORA. O snapshot dá o PERÍODO; a voz vem
+     da configuração vigente — quem editou a mensagem quer que a próxima
+     saia com ela. */
+  const modelo = await getMensagemDoCliente();
 
   const legenda =
     linha.snapshot && typeof linha.snapshot === "object"
-      ? buildGroupCaption(linha.snapshot as never)
-      : `Segue o relatório de performance de ${client.name}.`;
+      ? buildGroupCaption(linha.snapshot as never, modelo)
+      : /* Sem snapshot — relatório antigo. Monta com o mesmo texto, e o
+           período sai das colunas da própria linha do histórico. */
+        mensagemDoCliente(
+          {
+            periodoLabel: formatPeriod(linha.period_start, linha.period_end),
+            dias: diasEntre(linha.period_start, linha.period_end),
+            cliente: client.name,
+          },
+          modelo,
+        );
 
   const resultado = await sendReportFromUser(
     user.id,
@@ -481,4 +466,198 @@ export async function salvarAgendaDeRelatorio(input: {
   revalidatePath("/relatorios");
   revalidatePath("/clientes");
   return { ok: true };
+}
+
+/* =====================================================================
+   A mensagem que acompanha o relatório
+   ---------------------------------------------------------------------
+   Quem barra colaborador é a policy `report_message_settings_escrita`,
+   que exige `app.is_admin()`. Não repito a checagem aqui: duas fontes
+   de verdade sobre permissão divergem, e a que envelhece é a da
+   aplicação.
+   ===================================================================== */
+
+const mensagemSchema = z.object({
+  /* O teto é 900 e não 1024 pelo mesmo motivo do check no banco: o
+     WhatsApp corta em 1024 e a substituição de `{periodo}` CRESCE o
+     texto. A folga evita legenda truncada no meio da frase. */
+  template: z.string().trim().min(1).max(900),
+});
+
+export async function salvarMensagemDoCliente(input: {
+  template: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const parsed = mensagemSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: "A mensagem precisa ter entre 1 e 900 caracteres.",
+    };
+  }
+
+  /* MARCADOR DESCONHECIDO É ERRO DE DIGITAÇÃO, e ele chegaria cru ao
+     cliente. "{periodo }" ou "{cliente}" com acento passam pelo tamanho
+     e pelo check do banco, e o texto sai com a chave literal no meio.
+     Melhor recusar aqui, onde dá para dizer qual é. */
+  const conhecidos = new Set<string>(MARCADORES.map((m) => m.chave));
+  const usados = parsed.data.template.match(/\{[^}]*\}/g) ?? [];
+  const invalido = usados.find((m) => !conhecidos.has(m));
+  if (invalido) {
+    return {
+      ok: false,
+      error: `"${invalido}" não é um marcador conhecido. Use ${[...conhecidos].join(" ou ")}.`,
+    };
+  }
+
+  if (isDemoMode) return { ok: true };
+
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Sessão expirada. Entre novamente." };
+
+  /* ⚠️ `count`, E ELE É A CHECAGEM DE PERMISSÃO. Um `update` que não
+     casa NENHUMA linha volta com `error: null` — sucesso silencioso. E
+     é exatamente o que a RLS produz aqui: a policy de escrita exige
+     `app.is_admin()`, então para um colaborador a linha simplesmente
+     não existe, o Postgres não recusa nada e a ação devolvia `ok`.
+
+     Medido em 27/08/2026 contra o servidor local: colaborador recebia
+     "Mensagem salva.", o banco continuava com o texto anterior, e não
+     havia nada na tela dizendo o contrário. O mesmo defeito já tinha
+     aparecido em `setAdAccountId` — é o formato do PostgREST, não um
+     descuido isolado, e todo update sob RLS precisa desta contagem. */
+  const supabase = await createSupabaseServerClient();
+  const { error, count } = await supabase
+    .from("report_message_settings")
+    .update(
+      {
+        template: parsed.data.template,
+        updated_at: new Date().toISOString(),
+        updated_by: user.id,
+      },
+      { count: "exact" },
+    )
+    .eq("id", true);
+
+  if (error) {
+    if (error.code === "42501") {
+      return { ok: false, error: "Apenas administradores editam a mensagem." };
+    }
+    return { ok: false, error: error.message };
+  }
+
+  if (count === 0) {
+    return { ok: false, error: "Apenas administradores editam a mensagem." };
+  }
+
+  revalidatePath("/relatorios");
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
+
+const resumoSchema = z.object({
+  clientId: z.string().min(1),
+  start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+export type ResumoDoPeriodo = {
+  spendCents: number;
+  /** Cru, sem unidade aplicada — ver a nota da função. */
+  conversions: number;
+  revenueCents: number;
+  /**
+   * Os mesmos totais contados só nas campanhas de origem.
+   *
+   * É de onde saem CUSTO e RETORNO no cartão da tela — as duas razões
+   * que o PDF também divide pela campanha que compra o resultado. O
+   * volume (investimento, pedidos) continua vindo da conta inteira.
+   */
+  origem: { spendCents: number; conversions: number; revenueCents: number };
+  /**
+   * Quantas linhas de `daily_metrics` existem na janela.
+   *
+   * ZERO LINHA E ZERO REAL SÃO COISAS DIFERENTES, e a tela precisa
+   * distinguir: "a conta não gastou nada em julho" contra "julho nunca
+   * foi sincronizado". Os dois exibiam R$ 0,00 e a segunda leitura era
+   * indistinguível da primeira — foi exatamente assim que um mês
+   * inteiro sem backfill passou por relatório pronto para enviar.
+   */
+  linhas: number;
+};
+
+/**
+ * Soma as métricas da conta na janela pedida.
+ *
+ * ⚠️ ESTA AÇÃO É O QUE TORNA O SELETOR DE PERÍODO HONESTO. A estação de
+ * comando já teve um seletor e ele foi REMOVIDO porque mentia: trocava a
+ * frase ("resumo dos últimos 7 dias") sem trocar os números, que
+ * continuavam sendo os do mês inteiro. O comentário no componente
+ * registrava a dívida — "voltará quando houver busca de verdade por
+ * intervalo". É esta.
+ *
+ * O texto montado naquela tela é copiado e enviado ao cliente final. Um
+ * controle que muda o rótulo e não o dado é pior que controle nenhum:
+ * produz um número errado com aparência de conferido.
+ *
+ * A leitura passa por `getMetrics`, que roda sob RLS — um colaborador
+ * não soma a carteira de quem não atende.
+ *
+ * ⚠️ DEVOLVE OS TOTAIS CRUS, e não "o resultado" já resolvido. A versão
+ * anterior escolhia a unidade aqui, chamando `goalMetricFor(segment,
+ * null)` — e `null` naquele parâmetro significa "meta antiga, logo
+ * CONTAGEM", que é exatamente o que a documentação da função avisa.
+ * Resultado medido na tela: conta de e-commerce com R$ 12.170,81 de
+ * receita na janela exibindo "R$ 0,64", porque as 64 conversões estavam
+ * sendo formatadas como dinheiro.
+ *
+ * A unidade tem UM dono: `cliente.metric`, que o servidor já resolveu
+ * para os números iniciais. Quem chama aplica `goalExecutedFrom` com ela
+ * e os dois lados nunca discordam.
+ */
+export async function resumoDoPeriodo(
+  input: z.input<typeof resumoSchema>,
+): Promise<{ ok: true; resumo: ResumoDoPeriodo } | { ok: false; error: string }> {
+  const parsed = resumoSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Período inválido." };
+
+  const { clientId, start, end } = parsed.data;
+  if (end < start) {
+    return { ok: false, error: "O fim do período é anterior ao início." };
+  }
+
+  const { getClients, getMetrics } = await import("@/lib/data");
+  const { sumMetrics } = await import("@/lib/metrics/kpi");
+  const { tiposDeConversaoDoCliente } = await import(
+    "@/lib/ads/conversao-do-cliente"
+  );
+
+  /* A leitura de clientes existe só para provar que a conta é visível
+     para quem pediu: `getClients` roda sob RLS, e sem ela um id
+     adivinhado somaria a carteira de outra agência. */
+  const visivel = (await getClients()).some((c) => c.id === clientId);
+  if (!visivel) return { ok: false, error: "Conta não encontrada." };
+
+  const metricas = await getMetrics(clientId, start, end);
+  /* Com os tipos: é o que faz o cartão da tela mostrar o mesmo custo e o
+     mesmo retorno que o PDF gerado logo abaixo dele. */
+  const totais = sumMetrics(
+    metricas,
+    await tiposDeConversaoDoCliente(clientId),
+  );
+
+  return {
+    ok: true,
+    resumo: {
+      spendCents: totais.spendCents,
+      conversions: totais.conversions,
+      revenueCents: totais.revenueCents,
+      origem: {
+        spendCents: totais.origem.spendCents,
+        conversions: totais.origem.conversions,
+        revenueCents: totais.origem.revenueCents,
+      },
+      linhas: metricas.length,
+    },
+  };
 }

@@ -1,12 +1,11 @@
-import Link from "next/link";
 import type { Metadata } from "next";
 
 import { PageContainer, PageHeader } from "@/components/layout/page-header";
 import { TemplateSettingsDialog } from "@/components/reports/template-settings-dialog";
 import { ReportHistoryList } from "@/components/reports/report-history";
+import { MessageSettingsDialog } from "@/components/reports/message-settings-dialog";
 import { ReportSetupTable } from "@/components/reports/report-setup-table";
 import { getCurrentUser } from "@/lib/supabase/server";
-import { Button } from "@/components/ui/button";
 import {
   getClients,
   getClientsWithGoals,
@@ -14,13 +13,29 @@ import {
   getReportSetup,
   getReportTemplates,
 } from "@/lib/data";
+import { getMensagemDoCliente } from "@/lib/reports/mensagem-settings";
 import { resolverTemplate } from "@/lib/reports/template-resolver";
+import { goalExecutedFrom } from "@/lib/metrics/goal-metric";
 import type { ClientSegment } from "@/types/database";
 import { listarPendentes } from "./actions";
 import { SendQueue } from "./send-queue";
 import { CommandStation } from "./command-station";
 
 export const metadata: Metadata = { title: "Relatórios" };
+
+/**
+ * As server actions desta rota falam com a Evolution e com o Storage.
+ *
+ * `enviarRelatorio` espera DUAS chamadas de até 25s cada — o estado da
+ * instância e o `sendMedia`, que baixa o PDF do Storage. O teto padrão
+ * da plataforma é menor que isso, e quando a função é cortada a linha
+ * fica em 'sending' para sempre: some da fila e o histórico mostra
+ * "Enviando" sem botão.
+ *
+ * 60s é o teto do plano Hobby. Não é orçamento a gastar — é a folga que
+ * impede o corte no meio de um envio que ia dar certo.
+ */
+export const maxDuration = 60;
 
 const SEGMENT_LABELS: Record<ClientSegment, string> = {
   ecommerce: "E-commerce",
@@ -37,8 +52,15 @@ export default async function ReportsPage() {
      colaborador leria a lista curta como perda de dado. */
   const user = await getCurrentUser();
 
-  const [templates, reports, clients, pendentes, comMetricas, agenda] =
-    await Promise.all([
+  const [
+    templates,
+    reports,
+    clients,
+    pendentes,
+    comMetricas,
+    agenda,
+    modeloDaMensagem,
+  ] = await Promise.all([
       getReportTemplates(),
       getReports(),
       getClients(),
@@ -52,10 +74,19 @@ export default async function ReportsPage() {
          porque é o que destrava tudo abaixo: sem destino e dia, o cron
          não prepara e a fila nasce vazia. */
       getReportSetup(),
+      /* A legenda que acompanha o PDF. Buscada UMA vez e entregue a
+         dois lugares: o diálogo que a edita e a estação, que mostra a
+         prévia com o MESMO texto que o envio usa. Enquanto cada um
+         montava o seu, a equipe conferia um texto e o cliente recebia
+         outro. */
+      getMensagemDoCliente(),
     ]);
 
   const resumos = comMetricas.map((linha) => ({
     id: linha.client.id,
+    /* O SLUG, e não o id: é por ele que a rota de prévia resolve a
+       conta. Mandar o id abria o PDF em branco. */
+    slug: linha.client.slug,
     name: linha.client.name,
     spendCents: linha.computedSpendCents,
     /* O resultado já vem na unidade da conta: faturamento numa loja,
@@ -63,7 +94,18 @@ export default async function ReportsPage() {
        isso — escrever "Resultados: 4.820" onde são R$ 48,20 de receita
        mandaria o erro direto para o cliente final. */
     resultValue: linha.computedGoalValue,
+    /* O denominador de custo e retorno: só as campanhas de origem, que
+       é de onde o PDF os tira. O volume acima continua sendo da conta
+       inteira. */
+    origemSpendCents: linha.computedOrigem.spendCents,
+    origemResultValue: goalExecutedFrom(linha.metric, {
+      conversions: linha.computedOrigem.conversions,
+      revenueCents: linha.computedOrigem.revenueCents,
+    }),
     metric: linha.metric,
+    /* Zero linha e zero real são coisas diferentes, e só o primeiro é
+       motivo para travar o envio. Ver `linhasDeMetrica` em data.ts. */
+    linhas: linha.linhasDeMetrica,
     /* A janela que o servidor de fato somou. Vai junto porque é ela que
        rotula a mensagem enviada ao cliente — antes a tela escolhia um
        rótulo ("últimos 7 dias") que não tinha relação com o número. */
@@ -85,6 +127,12 @@ export default async function ReportsPage() {
         description="O que sai hoje e o que já saiu."
         actions={
           <>
+            {/* A MENSAGEM VEM ANTES DOS TEMPLATES, de propósito: é a
+                primeira coisa que o cliente lê, e muda mais que a lista
+                de métricas. */}
+            {user?.role === "admin" && (
+              <MessageSettingsDialog atual={modeloDaMensagem} />
+            )}
             {/* Templates viraram CONFIGURAÇÃO atrás de um botão: mexidos
                 talvez uma vez por trimestre, ocupavam metade da tela que
                 deveria mostrar o que precisa ser enviado hoje. */}
@@ -103,14 +151,6 @@ export default async function ReportsPage() {
                 }))}
               />
             )}
-            <Button
-              size="sm"
-              className="h-9"
-              nativeButton={false}
-              render={<Link href="/relatorios/novo" />}
-            >
-              Gerar relatório
-            </Button>
           </>
         }
       />
@@ -123,7 +163,7 @@ export default async function ReportsPage() {
       <ReportSetupTable linhas={agenda} />
 
       <div className="mt-8">
-        <CommandStation clients={resumos} />
+        <CommandStation clients={resumos} modeloDaMensagem={modeloDaMensagem} />
       </div>
 
       {/* Fila de envio ---------------------------------------------

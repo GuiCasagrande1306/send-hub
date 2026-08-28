@@ -54,3 +54,59 @@ export async function tiposDeConversaoDoCliente(
     integracao?.conversion_action_type,
   );
 }
+
+/**
+ * O mesmo, para a CARTEIRA INTEIRA, em duas consultas.
+ *
+ * POR QUE ISTO PRECISOU EXISTIR. `tiposDeConversaoDoCliente` faz duas
+ * idas ao banco por cliente, e ela foi colocada dentro de
+ * `getMetricsWithComparison` — que roda UMA VEZ POR CLIENTE no painel e
+ * na tela de relatórios. Com 35 clientes isso dobra o número de
+ * consultas da página.
+ *
+ * Medido contra o banco da Send em 28/08/2026:
+ *
+ *     70 consultas, uma por cliente ......... 588ms
+ *     as mesmas em lote, 2 consultas ........ 110ms
+ *
+ * Meio segundo para buscar segmento e ação de conversão de 35 clientes,
+ * um de cada vez, quando tudo cabe em duas consultas. O laço é
+ * `Promise.all`, então nem é serial — o custo é a quantidade de
+ * round-trips, não a ordem deles.
+ *
+ * Devolve um Map pronto para consulta por id. Cliente ausente do mapa
+ * cai no padrão do segmento, como se tivesse sido perguntado sozinho.
+ */
+export async function tiposDeConversaoDaCarteira(): Promise<
+  Map<string, string[]>
+> {
+  const mapa = new Map<string, string[]>();
+
+  if (isDemoMode) {
+    const { demoClients } = await import("@/lib/mock/data");
+    for (const c of demoClients) {
+      mapa.set(c.id, conversionActionFor(c.segment, null));
+    }
+    return mapa;
+  }
+
+  const admin = createSupabaseAdminClient();
+
+  const [{ data: clientes }, { data: integracoes }] = await Promise.all([
+    admin.from("clients").select("id, segment"),
+    admin
+      .from("client_integrations")
+      .select("client_id, conversion_action_type")
+      .eq("platform", "meta_ads"),
+  ]);
+
+  const override = new Map(
+    (integracoes ?? []).map((i) => [i.client_id, i.conversion_action_type]),
+  );
+
+  for (const c of clientes ?? []) {
+    mapa.set(c.id, conversionActionFor(c.segment, override.get(c.id)));
+  }
+
+  return mapa;
+}
