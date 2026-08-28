@@ -1,5 +1,7 @@
 import "server-only";
+import { MARCA_INTERROMPIDO } from "./envio-interrompido";
 
+import { intervaloDoMes } from "@/lib/date-br";
 import { isDemoMode } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { generateAndDeliverReport } from "./orchestrator";
@@ -60,6 +62,114 @@ export interface RelatorioDeDisparo {
   falhas: ResultadoCliente[];
   pulados: ResultadoCliente[];
   adiados: ResultadoCliente[];
+  /** Backfills disparados nesta rodada — ver `garantirDadosDoPeriodo`. */
+  sincronizados: { slug: string; janela: string; linhas: number; erro?: string }[];
+}
+
+/**
+ * O MÊS CIVIL ANTERIOR, completo — a janela do relatório mensal.
+ *
+ * ⚠️ NÃO É "30 dias terminando ontem", que era o que valia antes. Com
+ * aquela regra, uma conta que envia no dia 1º cobria de 02/08 a 31/08:
+ * o mês inteiro MENOS o primeiro dia. Medido em 28/08/2026, o que o
+ * dia 1º de agosto sozinho carrega na carteira da Send:
+ *
+ *     R$ 867,05 de investimento
+ *     324 conversões
+ *     R$ 6.921,96 de receita
+ *
+ * Some tudo isso do relatório, em silêncio, todo mês. E as 23 contas
+ * agendadas estão todas no dia 1º — quem mudar para outro dia passa a
+ * ter uma janela que atravessa dois meses e não fecha nenhum.
+ *
+ * O cliente que recebe em setembro espera ler AGOSTO, e compara com o
+ * faturamento que ele já fechou no caixa. Qualquer outra janela obriga
+ * ele a desconfiar do número — e desconfiar de um número é o mesmo que
+ * não ter o número.
+ */
+function mesAnterior(hojeISO: string) {
+  const [ano, mes] = hojeISO.split("-").map(Number);
+  const referencia =
+    mes === 1 ? `${ano - 1}-12` : `${ano}-${String(mes - 1).padStart(2, "0")}`;
+  return intervaloDoMes(referencia);
+}
+
+/**
+ * A janela do relatório já foi realmente buscada nas plataformas?
+ *
+ * O sync de rotina usa `mode: "month"` — do dia 1 do mês CORRENTE até
+ * hoje. Só o que começa ANTES disso nunca foi pedido à plataforma, e é
+ * exatamente o caso do relatório de mês fechado.
+ *
+ * SÓ QUANDO PRECISA: janela inteiramente dentro do mês corrente já foi
+ * coberta pela rodada de ontem, e o resumo semanal do meio do mês não
+ * paga nada por isto.
+ */
+export function precisaDeBackfill(
+  janelaStart: string,
+  hojeISO: string,
+): boolean {
+  return janelaStart < `${hojeISO.slice(0, 7)}-01`;
+}
+
+async function garantirDadosDoPeriodo(
+  cliente: Client,
+  janela: { start: string; end: string },
+  hojeISO: string,
+  jaFeitos: Set<string>,
+): Promise<RelatorioDeDisparo["sincronizados"][number] | null> {
+  if (isDemoMode) return null;
+  if (!precisaDeBackfill(janela.start, hojeISO)) return null;
+
+  const chave = `${cliente.id}|${janela.start}|${janela.end}`;
+  if (jaFeitos.has(chave)) return null;
+  jaFeitos.add(chave);
+
+  const registro = {
+    slug: cliente.slug,
+    janela: `${janela.start}..${janela.end}`,
+    linhas: 0,
+  };
+
+  try {
+    /* Import dinâmico: `sync.ts` carrega os dois provedores de anúncios
+       no topo. Estático, ele entraria em toda rota que importa este
+       módulo — inclusive a tela de relatórios, que só precisa das datas. */
+    const { syncAllClients } = await import("@/lib/ads/sync");
+
+    const relatorio = await syncAllClients({
+      clientId: cliente.id,
+      range: { since: janela.start, until: janela.end },
+    });
+
+    registro.linhas = relatorio.totalRowsUpserted;
+
+    /* Falha parcial NÃO interrompe. Uma conta com duas plataformas em
+       que só o Google recusa o token ainda tem os números da Meta, e um
+       relatório com um canal vale mais do que nenhum relatório. */
+    if (relatorio.failed > 0) {
+      return {
+        ...registro,
+        erro: relatorio.results
+          .filter((r) => !r.ok)
+          .map(
+            (r) =>
+              `${r.platform}: ${r.message ?? r.code ?? "erro sem mensagem"}`,
+          )
+          .join(" | "),
+      };
+    }
+
+    return registro;
+  } catch (error) {
+    /* Também não interrompe: o relatório sai com o que já existe no
+       banco. Sem dado nenhum ele sai zerado, que é o estado anterior a
+       este conserto — nunca pior. */
+    return {
+      ...registro,
+      erro: error instanceof Error ? error.message : "falha desconhecida",
+    };
+  }
 }
 
 /** Data corrente no fuso de São Paulo, como YYYY-MM-DD. */
@@ -74,18 +184,6 @@ function hojeNoBrasil(): string {
   }).format(new Date());
 }
 
-/** Janela de N dias terminando ONTEM, ancorada numa data YYYY-MM-DD. */
-function janelaAte(ontemISO: string, dias: number) {
-  // T12:00 evita que o deslocamento de fuso jogue a data para o dia
-  // anterior ao converter de volta para string.
-  const fim = new Date(`${ontemISO}T12:00:00Z`);
-  const inicio = new Date(fim);
-  inicio.setUTCDate(inicio.getUTCDate() - (dias - 1));
-
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  return { start: iso(inicio), end: iso(fim) };
-}
-
 export async function dispatchScheduledReports(options?: {
   /** Teto de tempo total. Padrão: 60s, o limite do plano Hobby. */
   budgetMs?: number;
@@ -96,12 +194,12 @@ export async function dispatchScheduledReports(options?: {
   const orcamento = options?.budgetMs ?? 60_000;
   const prazoFinal = inicio + orcamento - RESERVA_MS;
 
+  await destravarPresos();
+
   const hoje = hojeNoBrasil();
   const diaDoMes = options?.diaForcado ?? Number(hoje.slice(8, 10));
 
-  const ontem = new Date(`${hoje}T12:00:00Z`);
-  ontem.setUTCDate(ontem.getUTCDate() - 1);
-  const periodo = janelaAte(ontem.toISOString().slice(0, 10), 30);
+  const periodo = mesAnterior(hoje);
 
   const base: RelatorioDeDisparo = {
     executadoEm: new Date().toISOString(),
@@ -112,7 +210,12 @@ export async function dispatchScheduledReports(options?: {
     falhas: [],
     pulados: [],
     adiados: [],
+    sincronizados: [],
   };
+
+  /* Uma janela por conta, no máximo — o backfill é por (cliente, janela)
+     e todas as contas do dia compartilham a mesma janela. */
+  const backfillsFeitos = new Set<string>();
 
   const clientes = await clientesDoDia(diaDoMes);
   base.agendados = clientes.length;
@@ -145,6 +248,18 @@ export async function dispatchScheduledReports(options?: {
       });
       continue;
     }
+
+    /* O DADO ANTES DO DOCUMENTO. A rodada de sync cobre do dia 1 do mês
+       CORRENTE até hoje, e o relatório mensal lê o mês ANTERIOR — duas
+       janelas que não se encostam. Sem isto o PDF sai com o que houver
+       no banco, que para o mês fechado pode ser nada. */
+    const backfill = await garantirDadosDoPeriodo(
+      cliente,
+      periodo,
+      hoje,
+      backfillsFeitos,
+    );
+    if (backfill) base.sincronizados.push(backfill);
 
     const antes = Date.now();
 
@@ -210,4 +325,62 @@ async function clientesDoDia(dia: number): Promise<Client[]> {
 
   if (error) throw error;
   return (data ?? []) as Client[];
+}
+
+/**
+ * Marca como 'failed' os automáticos presos em geração ou em envio.
+ *
+ * Silencioso de propósito: é higiene de início de rodada, não um evento.
+ * O que interessa fica na própria linha — status e `error_message` — e é
+ * lá que alguém vai olhar quando perguntarem por um relatório que não
+ * chegou.
+ *
+ * ⚠️ 'sending' ENTRA, e o motivo é o índice. Uma linha automática presa
+ * em 'sending' não é destravada por ninguém, e como
+ * `report_history_automated_unique` ignora só 'failed' (migration 46),
+ * ela continuaria BLOQUEANDO qualquer nova geração daquele período — o
+ * cliente nunca mais receberia o relatório daquela janela.
+ *
+ * A MENSAGEM DIZ A AMBIGUIDADE porque ela é real: cortada entre gravar
+ * 'sending' e a resposta da Evolution, a mensagem pode ter saído. Marcar
+ * como falha é a escolha que DESTRAVA — e o texto avisa quem for olhar.
+ *
+ * `updated_at` e não `created_at` para o envio: a linha pode ter sido
+ * criada de manhã pelo cron e só ter ido para 'sending' à tarde. Isso só
+ * funciona porque a reserva em `enviarRelatorio` carimba `updated_at` —
+ * esta tabela não tem trigger.
+ */
+async function destravarPresos(): Promise<void> {
+  if (isDemoMode) return;
+
+  const admin = createSupabaseAdminClient();
+  const limite = new Date(Date.now() - 15 * 60_000).toISOString();
+
+  await admin
+    .from("report_history")
+    .update({
+      status: "failed",
+      error_message:
+        "Interrompido antes de terminar — a função foi cortada no meio da geração.",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("is_automated", true)
+    .in("status", ["queued", "generating"])
+    .lt("created_at", limite);
+
+  await admin
+    .from("report_history")
+    .update({
+      status: "failed",
+      /* O PREFIXO É CONTRATO com `listarPendentes`: é por ele que a fila
+         reconhece a linha como PRESA e continua oferecendo "Chegou /
+         Não chegou" em vez de um "Enviar" comum. Sem a marca, o cron
+         apagaria a ambiguidade que a tela construiu e a linha voltaria
+         no dia seguinte como falha qualquer. */
+      error_message: `${MARCA_INTERROMPIDO} — PODE ter sido entregue. Confira o grupo do cliente antes de mandar de novo.`,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("is_automated", true)
+    .eq("status", "sending")
+    .lt("updated_at", limite);
 }

@@ -7,6 +7,7 @@ import { isDemoMode } from "@/lib/env";
 import { getClients, getReports } from "@/lib/data";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatPeriod } from "@/lib/format";
+import { MARCA_INTERROMPIDO } from "@/lib/reports/envio-interrompido";
 import { getMensagemDoCliente } from "@/lib/reports/mensagem-settings";
 import {
   MARCADORES,
@@ -25,17 +26,62 @@ import type { Client, ReportHistory } from "@/types/database";
    não de um número da agência que ninguém salvou.
    ===================================================================== */
 
+/**
+ * Quanto tempo em 'sending' já é "preso".
+ *
+ * Cinco minutos: `maxDuration` da rota é 60s, então um envio que passa
+ * disso não está mais andando. Menos que isso arriscaria oferecer
+ * "Chegou / Não chegou" para um envio legítimo em curso.
+ */
+const MINUTOS_PRESO = 5;
+
+/** Períodos já entregues, lidos sem RLS. Ver a nota em `listarPendentes`. */
+async function periodosEntregues(): Promise<
+  { client_id: string; period_start: string; period_end: string }[]
+> {
+  if (isDemoMode) return [];
+  const { data } = await createSupabaseAdminClient()
+    .from("report_history")
+    .select("client_id, period_start, period_end")
+    .eq("status", "sent");
+  return (data ?? []) as {
+    client_id: string;
+    period_start: string;
+    period_end: string;
+  }[];
+}
+
 export interface EnvioPendente {
   report: ReportHistory;
   client: Client;
+  /**
+   * A linha ficou parada em 'sending'.
+   *
+   * ⚠️ ESTADO AMBÍGUO, e a tela precisa dizer isso. A função foi cortada
+   * entre gravar 'sending' e receber a resposta da Evolution — a
+   * mensagem PODE ter saído. Reenviar duplica; não reenviar deixa o
+   * cliente sem relatório. Quem decide é quem olha o grupo.
+   *
+   * Antes disto o registro simplesmente sumia: `listarPendentes` só
+   * listava 'ready' e 'failed', e o histórico mostrava "Enviando" sem
+   * botão. Não havia caminho na aplicação para retomar.
+   */
+  presoEmEnvio: boolean;
+  /**
+   * Link para CONFERIR o PDF, assinado agora.
+   *
+   * NÃO é `report.public_url`. Aquele foi assinado quando o arquivo
+   * nasceu e vale 7 dias — o mesmo motivo pelo qual `enviarRelatorio`
+   * reassina antes de despachar. A fila usava o campo gravado, então um
+   * relatório preparado e esquecido por mais de uma semana mostrava um
+   * botão "Conferir PDF" que abre erro do Storage. Justamente na tela
+   * cujo propósito é olhar o arquivo ANTES de o cliente ver.
+   *
+   * `null` quando o PDF não existe ou a assinatura falhou — aí o link
+   * some, em vez de aparecer quebrado.
+   */
+  pdfUrl: string | null;
 }
-
-/* ------------------------------------------------------------------ */
-/* Rascunho da análise, por IA                                         */
-
-export type AnaliseResult =
-  | { ok: true; insights: string; nextSteps: string[] }
-  | { ok: false; error: string };
 
 /** Dias que a janela cobre, contando as duas pontas. */
 function diasEntre(inicio: string, fim: string): number {
@@ -50,13 +96,78 @@ function diasEntre(inicio: string, fim: string): number {
 export async function listarPendentes(): Promise<EnvioPendente[]> {
   const [reports, clients] = await Promise.all([getReports(), getClients()]);
 
-  return reports
-    .filter((r) => r.status === "ready" || r.status === "failed")
+  /* PERÍODO JÁ ENTREGUE SAI DA FILA.
+     -----------------------------------------------------------------
+     Uma tentativa que falha vira 'failed' e a tentativa seguinte cria
+     uma linha NOVA — então o par "failed + sent do mesmo período" fica
+     na tabela, e a linha morta segue oferecendo o botão para sempre.
+     Quem varre a fila para despachar os do dia clica, e o cliente
+     recebe de novo, com o snapshot antigo e sem nada avisando.
+
+     A chave é conta + janela, não o id: são linhas diferentes falando
+     do mesmo relatório.
+
+     ⚠️ SERVICE_ROLE PARA ESTA PERGUNTA, e só para ela. `getReports()`
+     lê sob RLS, e a policy devolve ao colaborador apenas os envios
+     dele — ou seja, a linha 'sent' que esta trava precisa enxergar é
+     justamente a que fica INVISÍVEL para quem não a enviou. A
+     autorização não muda: quem entra na fila continua sendo decidido
+     por `getReports()`; o admin aqui só responde "este período já
+     saiu?", sobre conta que a pessoa já enxerga. */
+  const entregues = new Set(
+    (await periodosEntregues()).map(
+      (r) => `${r.client_id}|${r.period_start}|${r.period_end}`,
+    ),
+  );
+
+  const limitePreso = Date.now() - MINUTOS_PRESO * 60_000;
+
+  const pendentes = reports
+    .filter((r) => {
+      if (entregues.has(`${r.client_id}|${r.period_start}|${r.period_end}`)) {
+        return false;
+      }
+      if (r.status === "ready" || r.status === "failed") return true;
+      /* 'sending' só entra quando está PRESO. Recente é envio em
+         andamento de outra aba, e mostrá-lo convidaria ao clique duplo
+         que a reserva atômica existe para barrar. */
+      return (
+        r.status === "sending" &&
+        Date.parse(r.updated_at ?? r.created_at) < limitePreso
+      );
+    })
     .map((report) => {
       const client = clients.find((c) => c.id === report.client_id);
       return client ? { report, client } : null;
     })
-    .filter((x): x is EnvioPendente => x !== null);
+    .filter((x): x is { report: ReportHistory; client: Client } => x !== null);
+
+  /* Uma assinatura por linha, em paralelo. São unidades de relatório
+     por dia, não milhares — e o Storage assina sem ida ao banco. Uma
+     hora basta: o link serve para conferir agora, não para arquivar. */
+  const admin = isDemoMode ? null : createSupabaseAdminClient();
+
+  return Promise.all(
+    pendentes.map(async (item) => {
+      /* 'failed' COM A MARCA também é preso: foi o cron que o tirou de
+         'sending' para destravar o índice, e a ambiguidade continua a
+         mesma. Sem isto a linha reaparece no dia seguinte com botão
+         "Enviar" comum, e quem estiver de plantão manda de novo um
+         relatório que talvez já tenha chegado. */
+      const presoEmEnvio =
+        item.report.status === "sending" ||
+        (item.report.status === "failed" &&
+          (item.report.error_message ?? "").startsWith(MARCA_INTERROMPIDO));
+
+      if (!admin || !item.report.storage_path) {
+        return { ...item, pdfUrl: null, presoEmEnvio };
+      }
+      const { data } = await admin.storage
+        .from("report-pdfs")
+        .createSignedUrl(item.report.storage_path, 60 * 60);
+      return { ...item, pdfUrl: data?.signedUrl ?? null, presoEmEnvio };
+    }),
+  );
 }
 
 export interface ResultadoEnvio {
@@ -199,7 +310,20 @@ export async function enviarRelatorio(
      está saindo agora (e duplicar seria o defeito) ou está preso. */
   const { error: erroReserva, count: reservadas } = await supabase
     .from("report_history")
-    .update({ status: "sending" }, { count: "exact" })
+    .update(
+      {
+        status: "sending",
+        /* ⚠️ O CARIMBO É OBRIGATÓRIO, e não é enfeite: `updated_at` não
+           tem trigger nesta tabela. Sem gravá-lo aqui ele continuaria
+           valendo a hora da CRIAÇÃO, e um relatório preparado pelo cron
+           às 6h20 e despachado às 15h apareceria como "preso" no
+           instante em que o envio começasse — oferecendo "Chegou / Não
+           chegou" sobre um envio que está andando, e permitindo que um
+           clique em "Não chegou" arrancasse a reserva no meio. */
+        updated_at: new Date().toISOString(),
+      },
+      { count: "exact" },
+    )
     .eq("id", reportId)
     .in("status", ["ready", "failed"]);
 
@@ -266,6 +390,73 @@ export async function enviarRelatorio(
       generated_by: linha.generated_by ?? user.id,
     })
     .eq("id", reportId);
+
+  revalidatePath("/relatorios");
+  return { ok: true };
+}
+
+/**
+ * Resolve uma linha presa em 'sending'.
+ *
+ * ⚠️ NÃO ADIVINHA. Uma função cortada entre gravar 'sending' e receber a
+ * resposta da Evolution deixa um estado genuinamente ambíguo: a
+ * mensagem pode ter saído. Marcar como falha sozinho faria alguém
+ * reenviar por cima de um relatório entregue; marcar como enviado
+ * deixaria o cliente sem nada. Quem sabe é quem abre o grupo e olha.
+ *
+ * Por isso são DUAS saídas explícitas, e nenhuma delas é o padrão.
+ */
+export async function resolverEnvioPreso(
+  reportId: string,
+  decisao: "chegou" | "nao-chegou",
+): Promise<ResultadoEnvio> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Sessão expirada. Entre novamente." };
+  if (isDemoMode) return { ok: false, error: "Modo demo: sem envio real." };
+
+  const supabase = await createSupabaseServerClient();
+
+  /* ⚠️ SÓ SE ESTIVER PRESA DE VERDADE. 'sending' também é o estado de um
+     envio LEGÍTIMO em andamento: sem esta janela, um clique em "Não
+     chegou" numa aba velha arrancaria a reserva de quem está enviando
+     naquele instante, devolvendo a linha para 'failed' — que a reserva
+     aceita — e abrindo caminho para o envio em dobro. É a mesma
+     definição de "preso" usada em `listarPendentes`, e ela só significa
+     alguma coisa porque a reserva carimba `updated_at`. */
+  const limitePreso = new Date(
+    Date.now() - MINUTOS_PRESO * 60_000,
+  ).toISOString();
+
+  const { count } = await supabase
+    .from("report_history")
+    .update(
+      decisao === "chegou"
+        ? {
+            status: "sent",
+            delivered_at: new Date().toISOString(),
+            error_message:
+              "Marcado como entregue à mão: o envio foi interrompido e alguém confirmou no grupo.",
+            updated_at: new Date().toISOString(),
+          }
+        : {
+            status: "failed",
+            error_message:
+              "Envio interrompido no meio. Marcado como não entregue por quem conferiu o grupo.",
+            updated_at: new Date().toISOString(),
+          },
+      { count: "exact" },
+    )
+    .eq("id", reportId)
+    .eq("status", "sending")
+    .lt("updated_at", limitePreso);
+
+  if (count !== 1) {
+    return {
+      ok: false,
+      error:
+        "Esta linha não está mais presa — ou alguém já resolveu, ou o envio voltou a andar. Recarregue a fila.",
+    };
+  }
 
   revalidatePath("/relatorios");
   return { ok: true };

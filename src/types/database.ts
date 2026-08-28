@@ -464,6 +464,17 @@ export interface ReportHistory {
   /** true quando gerado pelo cron; impede disparo duplicado do período. */
   is_automated: boolean;
   /**
+   * ⚠️ NÃO É MANTIDO POR TRIGGER — quem grava precisa carimbar.
+   *
+   * A coluna existe desde o schema com `default now()`, mas nada a
+   * atualiza sozinha. É por ela que a fila decide se uma linha em
+   * 'sending' está PRESA ou apenas saindo agora: sem o carimbo na
+   * reserva, `updated_at` continuaria valendo a hora da CRIAÇÃO, e um
+   * relatório preparado às 6h20 e despachado às 15h apareceria como
+   * preso no instante em que o envio começasse.
+   */
+  updated_at: string;
+  /**
    * `monthly` = PDF do fechamento. `weekly` = resumo de texto por
    * WhatsApp, sem anexo — a linha nasce sem `storage_path`, e é esta
    * coluna que impede a fila de oferecer "Conferir PDF" onde não há um.

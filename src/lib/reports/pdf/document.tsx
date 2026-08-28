@@ -1,5 +1,8 @@
+import { join } from "node:path";
+
 import {
   Document,
+  Font,
   Image,
   Page,
   StyleSheet,
@@ -23,12 +26,26 @@ import {
    ---------------------------------------------------------------------
    Notas de implementação:
 
-   • Tipografia: Helvetica (embutida no react-pdf). Para usar Inter ou
-     Satoshi, registrar o .ttf no bundle:
-        Font.register({ family: "Inter", src: path.join(process.cwd(),
-          "src/assets/fonts/Inter-Regular.ttf") })
-     Evitamos baixar fonte por URL em tempo de render: uma falha de rede
-     derrubaria a geração do relatório inteiro.
+   • Tipografia: GEIST, EMBUTIDA no arquivo.
+
+     ⚠️ CORREÇÃO DE UMA AFIRMAÇÃO QUE ESTAVA AQUI. Este comentário dizia
+     "Helvetica (embutida no react-pdf)". É falso, e sustentou o
+     defeito: as quatorze fontes padrão do PDF — Helvetica entre elas —
+     NÃO são embutidas por definição. O arquivo só escreve "use
+     Helvetica" e transfere o problema para quem abre.
+
+     Em desktop passa despercebido, porque Preview, Acrobat e Chrome
+     substituem por Arial, que tem métrica idêntica. No celular — que é
+     onde o cliente abre o PDF que chega por WhatsApp — não existe
+     Helvetica nem Arial: o visualizador troca por Roboto ou pior, as
+     larguras deixam de bater com as posições que o react-pdf calculou,
+     e o resultado é texto sobreposto e valor que some da página.
+
+     Geist porque é a mesma família da interface, é OFL (redistribuível,
+     e a licença acompanha em `src/assets/fonts/OFL.txt`) e cobre o
+     português inteiro. Os arquivos são lidos do disco no bundle, nunca
+     por URL: uma falha de rede em tempo de render derrubaria a geração
+     do relatório inteiro.
 
    • Gráficos: desenhados com <View> posicionado. O react-pdf não executa
      Recharts (não há DOM), e rasterizar gráfico como imagem perderia a
@@ -39,6 +56,58 @@ import {
      aqui aborta a geração inteira, e um criativo sem thumb não pode
      custar o relatório do cliente.
    ===================================================================== */
+
+/* Caminho montado em tempo de execução, e não `import` do .ttf: o
+   loader trataria o import como asset e devolveria uma URL, que é
+   exatamente o caminho por rede que este documento não pode depender.
+   Na Vercel o `outputFileTracingIncludes` do next.config garante que os
+   dois arquivos viajem junto com a função. */
+const DIR_FONTES = join(process.cwd(), "src/assets/fonts");
+
+/* AS QUATRO ENTRADAS SÃO OBRIGATÓRIAS, e as duas de baixo não são
+   decoração.
+
+   O react-pdf resolve fonte por (família, peso, estilo) e LANÇA ERRO
+   quando a combinação não existe — não cai para a mais próxima. Como
+   Helvetica era usada antes, e Helvetica-Oblique é uma das quatorze
+   fontes padrão do PDF, todo `fontStyle: "italic"` resolvia sozinho. Ao
+   trocar para Geist esse chão some: uma nota em itálico numa seção
+   vazia derruba a geração INTEIRA com
+
+     Error: Could not resolve font for Geist, fontWeight 400, fontStyle italic
+
+   e o cliente recebe um 500 no lugar do relatório.
+
+   Geist não tem itálico: a família publicada pela Vercel é só vertical.
+   Então as entradas `italic` apontam para os MESMOS arquivos verticais.
+   O texto sai sem inclinação, e essa é a escolha consciente — perder a
+   inclinação de uma nota secundária custa quase nada, perder o
+   relatório custa o envio ao cliente. Isto existe para que um
+   `fontStyle: "italic"` escrito daqui a seis meses degrade em vez de
+   derrubar. */
+Font.register({
+  family: "Geist",
+  fonts: [
+    { src: join(DIR_FONTES, "Geist-Regular.ttf"), fontWeight: 400 },
+    { src: join(DIR_FONTES, "Geist-Bold.ttf"), fontWeight: 700 },
+    {
+      src: join(DIR_FONTES, "Geist-Regular.ttf"),
+      fontWeight: 400,
+      fontStyle: "italic",
+    },
+    {
+      src: join(DIR_FONTES, "Geist-Bold.ttf"),
+      fontWeight: 700,
+      fontStyle: "italic",
+    },
+  ],
+});
+
+/* O hifenizador padrão do react-pdf quebra palavra no meio sem hífen
+   visível, e em português isso produz coisas como "investi mento" no
+   meio de um cartão estreito. Desligado: preferimos a palavra inteira
+   passando para a linha seguinte. */
+Font.registerHyphenationCallback((palavra) => [palavra]);
 
 const INK = "#141413";
 const INK_SOFT = "#5C5C57";
@@ -53,13 +122,13 @@ const styles = StyleSheet.create({
     paddingBottom: 56,
     paddingHorizontal: 44,
     fontSize: 9.5,
-    fontFamily: "Helvetica",
+    fontFamily: "Geist",
     color: INK,
     backgroundColor: "#FFFFFF",
   },
 
   /* ---------------------------- Capa ---------------------------- */
-  cover: { padding: 0, fontFamily: "Helvetica", color: INK },
+  cover: { padding: 0, fontFamily: "Geist", color: INK },
   coverBand: { height: 300, paddingTop: 56, paddingHorizontal: 48 },
   coverEyebrow: {
     fontSize: 8,
@@ -70,7 +139,7 @@ const styles = StyleSheet.create({
   },
   coverTitle: {
     fontSize: 34,
-    fontFamily: "Helvetica-Bold",
+    fontFamily: "Geist", fontWeight: 700,
     color: "#FFFFFF",
     marginTop: 14,
     lineHeight: 1.1,
@@ -85,7 +154,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     color: INK_SOFT,
   },
-  h2: { fontSize: 15, fontFamily: "Helvetica-Bold", marginBottom: 3 },
+  h2: { fontSize: 15, fontFamily: "Geist", fontWeight: 700, marginBottom: 3 },
   sub: { fontSize: 9, color: INK_SOFT, marginBottom: 16 },
   section: { marginBottom: 26 },
 
@@ -98,7 +167,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: HAIRLINE,
   },
-  headerName: { fontSize: 10, fontFamily: "Helvetica-Bold" },
+  headerName: { fontSize: 10, fontFamily: "Geist", fontWeight: 700 },
   headerMeta: { fontSize: 8, color: INK_SOFT },
 
   footer: {
@@ -131,7 +200,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     color: INK_SOFT,
   },
-  kpiValue: { fontSize: 20, fontFamily: "Helvetica-Bold", marginTop: 7 },
+  kpiValue: { fontSize: 20, fontFamily: "Geist", fontWeight: 700, marginTop: 7 },
   kpiDelta: { fontSize: 8, marginTop: 6 },
   kpiPrev: { fontSize: 7.5, color: INK_SOFT, marginTop: 2 },
   /* O selo da campanha de origem. Fica ACIMA do delta e abaixo do
@@ -164,7 +233,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 3,
     fontSize: 8,
-    fontFamily: "Helvetica-Bold",
+    fontFamily: "Geist", fontWeight: 700,
     letterSpacing: 1,
     textTransform: "uppercase",
     color: "#FFFFFF",
@@ -186,7 +255,7 @@ const styles = StyleSheet.create({
   },
   th: {
     fontSize: 7.5,
-    fontFamily: "Helvetica-Bold",
+    fontFamily: "Geist", fontWeight: 700,
     letterSpacing: 0.6,
     textTransform: "uppercase",
     color: INK_SOFT,
@@ -199,7 +268,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 5,
   },
-  splitName: { fontSize: 9.5, fontFamily: "Helvetica-Bold" },
+  splitName: { fontSize: 9.5, fontFamily: "Geist", fontWeight: 700 },
   splitTrack: {
     height: 5,
     backgroundColor: HAIRLINE,
@@ -232,7 +301,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     color: INK_SOFT,
   },
-  adHeadline: { fontSize: 10, fontFamily: "Helvetica-Bold", marginTop: 3 },
+  adHeadline: { fontSize: 10, fontFamily: "Geist", fontWeight: 700, marginTop: 3 },
   adCopy: { fontSize: 8, color: INK_SOFT, marginTop: 4, lineHeight: 1.45 },
   adMetrics: {
     flexDirection: "row",
@@ -248,12 +317,12 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     color: INK_SOFT,
   },
-  adMetricValue: { fontSize: 9, fontFamily: "Helvetica-Bold", marginTop: 2 },
+  adMetricValue: { fontSize: 9, fontFamily: "Geist", fontWeight: 700, marginTop: 2 },
 
   /* --------------------------- Textos --------------------------- */
   paragraph: { fontSize: 9.5, lineHeight: 1.6, color: INK },
   stepRow: { flexDirection: "row", gap: 8, marginBottom: 7 },
-  stepIndex: { fontSize: 9, fontFamily: "Helvetica-Bold", width: 14 },
+  stepIndex: { fontSize: 9, fontFamily: "Geist", fontWeight: 700, width: 14 },
   stepText: { fontSize: 9.5, lineHeight: 1.5, flex: 1 },
 
   emptyNote: {
@@ -433,12 +502,15 @@ function DeltaText({ kpi }: { kpi: ReportPayload["kpis"][number] }) {
         ? NEGATIVE
         : INK_SOFT;
 
-  // Sem glifo de seta: a Helvetica embutida no PDF usa codificação
-  // WinAnsi, que não tem ▲/▼ — os caracteres saem substituídos por
-  // lixo ("²", "¼"). O sinal explícito diz a direção e a cor diz se é
-  // bom ou ruim, que é a informação que importa.
-  // `formatDelta` já devolve "+5,0%" / "-0,8%" com hífen ASCII (U+002D),
-  // que existe em WinAnsi. Evitar o sinal tipográfico U+2212, que não.
+  // Sem glifo de seta, e a RAZÃO MUDOU. Ela era a codificação: a
+  // Helvetica do PDF usa WinAnsi, que não tem ▲/▼, e os caracteres
+  // saíam como lixo ("²", "¼"). Com Geist embutida isso acabou —
+  // conferido no arquivo: U+25B2, U+25BC e U+2212 estão todos na fonte.
+  //
+  // O sinal explícito FICA, agora por escolha e não por limitação: ele
+  // diz a direção, a cor diz se é bom ou ruim, e as duas coisas juntas
+  // sobrevivem a um PDF impresso em preto e branco, que a seta colorida
+  // sozinha não faria.
   return (
     <>
       <Text style={[styles.kpiDelta, { color }]}>

@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { formatPeriod, formatPeriodNumeric } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { enviarRelatorio, type EnvioPendente } from "./actions";
+import { enviarRelatorio, resolverEnvioPreso, type EnvioPendente } from "./actions";
 
 /* =====================================================================
    Fila de envio
@@ -54,18 +54,53 @@ export function SendQueue({ itens }: { itens: EnvioPendente[] }) {
 
 function LinhaEnvio({ item }: { item: EnvioPendente }) {
   const [pendente, startTransition] = useTransition();
-  const [erro, setErro] = useState<string | null>(
-    item.report.status === "failed" ? item.report.error_message : null,
-  );
+  /* ⚠️ COMEÇA NULO, e o erro persistido é lido a cada render.
+     Inicializar o estado com `item.report.error_message` roda UMA vez na
+     montagem, e a `key` desta linha é estável — então a tarja vermelha
+     grudava na linha mesmo depois de a retentativa devolvê-la a
+     'ready'. */
+  const [erro, setErro] = useState<string | null>(null);
   const [enviado, setEnviado] = useState(false);
+  const [resolvido, setResolvido] = useState(false);
+
+  const erroPersistido =
+    item.report.status === "failed" ? item.report.error_message : null;
+  const erroVisivel = erro ?? erroPersistido;
   const [mostrandoTexto, setMostrandoTexto] = useState(false);
 
   function despachar() {
     setErro(null);
     startTransition(async () => {
-      const r = await enviarRelatorio(item.report.id);
-      if (r.ok) setEnviado(true);
-      else setErro(r.error ?? "Falha no envio.");
+      try {
+        const r = await enviarRelatorio(item.report.id);
+        if (r.ok) setEnviado(true);
+        else setErro(r.error ?? "Falha no envio.");
+      } catch {
+        /* Server Action recusada pela rede LANÇA, e dentro de
+           `useTransition` a exceção escapa para o error boundary e leva
+           a fila inteira junto. */
+        setErro("Falha de rede. Tente de novo.");
+      }
+    });
+  }
+
+  function resolver(decisao: "chegou" | "nao-chegou") {
+    setErro(null);
+    startTransition(async () => {
+      try {
+        const r = await resolverEnvioPreso(item.report.id, decisao);
+        if (!r.ok) {
+          setErro(r.error ?? "Não deu para resolver.");
+          return;
+        }
+        /* ⚠️ SÓ EM "CHEGOU". Marcar `resolvido` depois de "Não chegou"
+           venceria para sempre sobre o botão Enviar — a tela diria
+           "Resolvido ✓" e o relatório nunca sairia. Ali a linha volta
+           para 'failed' e precisa reaparecer com o botão normal. */
+        if (decisao === "chegou") setResolvido(true);
+      } catch {
+        setErro("Falha de rede. Tente de novo.");
+      }
     });
   }
 
@@ -117,9 +152,9 @@ function LinhaEnvio({ item }: { item: EnvioPendente }) {
           {mostrandoTexto ? "Ocultar texto" : "Ver texto"}
         </button>
       ) : (
-        item.report.public_url && (
+        item.pdfUrl && (
           <a
-            href={item.report.public_url}
+            href={item.pdfUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-xs text-signal hover:underline"
@@ -130,8 +165,33 @@ function LinhaEnvio({ item }: { item: EnvioPendente }) {
         )
       )}
 
-      {enviado ? (
-        <span className="text-xs font-medium text-positive">Enviado ✓</span>
+      {enviado || resolvido ? (
+        <span className="text-xs font-medium text-positive">
+          {enviado ? "Enviado ✓" : "Resolvido ✓"}
+        </span>
+      ) : item.presoEmEnvio ? (
+        /* TRAVOU NO MEIO DO ENVIO — e o estado é ambíguo de verdade: a
+           função foi cortada entre reservar a linha e ouvir a resposta
+           da Evolution, então a mensagem PODE ter chegado. Dois botões
+           e nenhum padrão; quem decide é quem abre o grupo. */
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pendente}
+            onClick={() => resolver("chegou")}
+          >
+            Chegou
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pendente}
+            onClick={() => resolver("nao-chegou")}
+          >
+            Não chegou
+          </Button>
+        </div>
       ) : (
         <Button
           size="sm"
@@ -160,14 +220,26 @@ function LinhaEnvio({ item }: { item: EnvioPendente }) {
         </pre>
       )}
 
-      {erro && (
+      {/* A LINHA PRESA GANHA AVISO ÂMBAR, não vermelho: vermelho diz
+          "falhou", e aqui o ponto é que NÃO SE SABE. */}
+      {item.presoEmEnvio && !resolvido && (
+        <p className="flex w-full items-start gap-1.5 rounded-lg bg-warning-muted px-3 py-2 text-xs text-warning">
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            <strong>Travou no meio do envio.</strong> A mensagem pode ter
+            chegado — abra o grupo do cliente e confira antes de decidir.
+          </span>
+        </p>
+      )}
+
+      {erroVisivel && !item.presoEmEnvio && (
         <p
           className={cn(
             "flex w-full items-start gap-1.5 rounded-lg bg-negative-muted/40 px-3 py-2 text-xs text-negative",
           )}
         >
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-          {erro}
+          {erroVisivel}
         </p>
       )}
     </li>

@@ -1149,6 +1149,7 @@ export const demoReports: ReportHistory[] = [
     delivered_at: daysAhead(-29),
     generated_by: "u-admin",
     created_at: daysAhead(-29),
+    updated_at: daysAhead(-29),
   },
   {
     id: "rh-2",
@@ -1171,6 +1172,7 @@ export const demoReports: ReportHistory[] = [
     delivered_at: daysAhead(-14),
     generated_by: "u-admin",
     created_at: daysAhead(-14),
+    updated_at: daysAhead(-14),
   },
   {
     id: "rh-3",
@@ -1193,6 +1195,7 @@ export const demoReports: ReportHistory[] = [
     delivered_at: null,
     generated_by: "u-lucas",
     created_at: daysAhead(-1),
+    updated_at: daysAhead(-1),
   },
   /* Resumo semanal aguardando envio. Sem `storage_path` nem
      `page_count` de propósito: é texto, não anexo — e é essa linha que
@@ -1233,6 +1236,7 @@ export const demoReports: ReportHistory[] = [
     delivered_at: null,
     generated_by: null,
     created_at: daysAhead(0),
+    updated_at: daysAhead(0),
   },
 ];
 
