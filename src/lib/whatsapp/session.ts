@@ -518,6 +518,62 @@ export async function sendReportFromUser(
   return { success: true, messageId: resultado.messageId };
 }
 
+/**
+ * Texto puro, pelo WhatsApp de uma pessoa.
+ *
+ * Mesmo caminho de `sendReportFromUser`, sem anexo. Existe para o aviso
+ * diário de saldo, que vai a um grupo interno da agência e não leva
+ * documento nenhum.
+ *
+ * ⚠️ POR QUE NÃO `sendTextMessage` DE `whatsapp/index.ts`: aquele usa a
+ * instância padrão do ambiente. Aqui o remetente é a pessoa dona do
+ * grupo escolhido — o mesmo número que já participa dele. Mandar pela
+ * instância da agência falharia com erro genérico se ela não fosse
+ * membro, que é o caso normal.
+ *
+ * A conferência de sessão vem ANTES do envio pelo mesmo motivo do
+ * relatório: a Evolution devolve "não foi possível enviar" tanto para
+ * sessão caída quanto para grupo inexistente, e as duas pedem coisas
+ * opostas de quem lê o erro.
+ */
+export async function sendTextFromUser(
+  userId: string,
+  to: string,
+  text: string,
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const status = await getSessionStatus(userId);
+
+  if (status.state !== "open") {
+    return {
+      success: false,
+      error:
+        status.state === "absent"
+          ? "Seu WhatsApp não está conectado. Leia o QR em Configurações."
+          : "Sua conexão caiu. Releia o QR em Configurações.",
+    };
+  }
+
+  const resultado = await evolutionRequest(
+    "message/sendText",
+    {
+      number: normalizePhone(to),
+      text,
+      delay: 1200,
+    },
+    instanceNameFor(userId),
+  );
+
+  if (!resultado.success) {
+    const dica =
+      isGroupJid(to) && /not.*found|exists|invalid/i.test(resultado.error ?? "")
+        ? " Verifique se o SEU número participa deste grupo."
+        : "";
+    return { success: false, error: `${resultado.error}${dica}` };
+  }
+
+  return { success: true, messageId: resultado.messageId };
+}
+
 /** Nome de arquivo seguro: sem acento, espaço ou barra. */
 function nomeDeArquivo(valor: string): string {
   return (

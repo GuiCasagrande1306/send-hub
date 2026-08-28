@@ -26,9 +26,9 @@ import { materializarMes, mesCorrente } from "@/lib/finance/recurrence";
  * com os números de ontem no lugar dos de hoje — e o relatório sairia
  * assinado como "fechado". Errado e silencioso.
  *
- * Ao migrar para Pro, separar é trivial: `?etapa=recorrencia`, `?etapa=sync`
- * e `?etapa=envio` já dividem o trabalho, bastando apontar um cron para
- * cada. `?etapa=recorrencia` também é o jeito de conferir a emissão do
+ * Ao migrar para Pro, separar é trivial: `?etapa=recorrencia`, `?etapa=sync`,
+ * `?etapa=envio`, `?etapa=semanal` e `?etapa=saldo` já dividem o
+ * trabalho, bastando apontar um cron para cada. `?etapa=recorrencia` também é o jeito de conferir a emissão do
  * mês sem esperar a rodada completa.
  *
  * AUTENTICAÇÃO
@@ -192,6 +192,26 @@ export async function GET(request: NextRequest) {
       });
     } catch (error) {
       resposta.semanais = {
+        erro: error instanceof Error ? error.message : "falha desconhecida",
+      };
+    }
+  }
+
+  /* --- Etapa 5: aviso de saldo -----------------------------------
+     DEPOIS DO SYNC, e é obrigatório que seja: o ritmo de gasto sai de
+     `daily_metrics`, e avisar antes de sincronizar mediria a semana com
+     um dia a menos — projeção otimista justamente no alerta que existe
+     para não ser otimista.
+
+     Etapa própria, com try/catch como as outras: o aviso é interno, e
+     uma falha nele não pode derrubar o relatório do cliente que já saiu
+     nas etapas acima. */
+  if (rodar("saldo")) {
+    try {
+      const { enviarAvisoDeSaldo } = await import("@/lib/ads/balance-notice");
+      resposta.saldo = await enviarAvisoDeSaldo();
+    } catch (error) {
+      resposta.saldo = {
         erro: error instanceof Error ? error.message : "falha desconhecida",
       };
     }

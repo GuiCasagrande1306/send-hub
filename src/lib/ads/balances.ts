@@ -2,6 +2,7 @@ import "server-only";
 
 import { dataNoBrasil } from "@/lib/date-br";
 import { isDemoMode } from "@/lib/env";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { fetchPrepaidBalances, type ContaSaldo } from "./meta-balance";
 import { fetchGoogleBalances, type SaldoGoogle } from "./google-balance";
@@ -186,7 +187,9 @@ export function projetar(
   };
 }
 
-export async function getBalanceAlerts(): Promise<BalanceAlert[]> {
+export async function getBalanceAlerts(
+  comoSistema = false,
+): Promise<BalanceAlert[]> {
   const {
     clients,
     gastoPorConta,
@@ -196,7 +199,7 @@ export async function getBalanceAlerts(): Promise<BalanceAlert[]> {
     saldosGoogle,
     fundos,
     gastoDesdeRecarga,
-  } = await carregar();
+  } = await carregar(comoSistema);
 
   const alertas: BalanceAlert[] = [];
 
@@ -333,7 +336,7 @@ export async function getBalanceAlerts(): Promise<BalanceAlert[]> {
 
 /* ------------------------------------------------------------------ */
 
-async function carregar(): Promise<{
+async function carregar(comoSistema = false): Promise<{
   clients: Client[];
   gastoPorConta: Map<string, number>;
   /**
@@ -466,7 +469,13 @@ async function carregar(): Promise<{
      equipe, qualquer usuário vê a lista de clientes — e `daily_metrics`
      continua com policy própria, então o gasto só aparece para quem tem
      acesso à conta. O alerta é global; o número é filtrado. */
-  const supabase = await createSupabaseServerClient();
+  /* `comoSistema` é o caminho do CRON, que não tem sessão. Sem ele, a
+     leitura sob RLS devolve zero cliente numa invocação sem usuário — e
+     o aviso diário sairia dizendo que está tudo bem, que é o pior
+     desfecho possível para um alerta. */
+  const supabase = comoSistema
+    ? createSupabaseAdminClient()
+    : await createSupabaseServerClient();
 
   const [{ data: clients }, { data: metrics }, { data: integracoes }] =
     await Promise.all([
@@ -571,4 +580,15 @@ async function carregar(): Promise<{
     fundos,
     gastoDesdeRecarga,
   };
+}
+
+/**
+ * A mesma lista, lida com service_role.
+ *
+ * Para o CRON, que roda sem usuário. `getBalanceAlerts()` passa pela
+ * RLS: numa invocação sem sessão ela devolve zero cliente, e o aviso
+ * diário sairia afirmando que não há nada crítico.
+ */
+export function getBalanceAlertsAsSystem(): Promise<BalanceAlert[]> {
+  return getBalanceAlerts(true);
 }

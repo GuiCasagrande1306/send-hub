@@ -11,6 +11,12 @@ import {
 } from "@/lib/ads/balances";
 import { formatCurrency } from "@/lib/format";
 import { getCurrentUser } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { isDemoMode } from "@/lib/env";
+import {
+  DestinoDoAviso,
+  type GrupoDisponivel,
+} from "@/components/balances/destino-do-aviso";
 import { cn } from "@/lib/utils";
 import type { BalanceAlert, BalanceStatus } from "@/lib/ads/balances";
 
@@ -85,6 +91,11 @@ export default async function BalanceAlertsPage() {
         title="⚠️ Alertas de saldo"
         description={`Saldo disponível e quanto ele dura no ritmo dos últimos dias. Crítico abaixo de ${DIAS_DE_ALERTA} dias, atenção abaixo de ${DIAS_DE_ATENCAO}.`}
       />
+
+      {/* O DESTINO VEM PRIMEIRO. A página inteira responde "quais contas
+          estão em risco"; quem abre precisa saber, antes de ler os
+          números, se alguém está sendo avisado sem precisar abrir. */}
+      <Destino podeEditar={user.role === "admin"} />
 
       {/* O aviso vem ANTES dos cards porque muda como o número deve ser
           lido — depois deles já é tarde. */}
@@ -308,4 +319,71 @@ function urgencia(linha: {
     .map((a) => PESO_STATUS[a.status]);
 
   return pesos.length ? Math.min(...pesos) : 9;
+}
+
+
+/* =====================================================================
+   Destino do aviso diário
+   ---------------------------------------------------------------------
+   Carregado com service_role e não sob RLS: `whatsapp_groups` guarda os
+   grupos de todos os operadores, e a lista precisa mostrar os que
+   existem — não só os de quem abriu a tela.
+   ===================================================================== */
+
+async function Destino({ podeEditar }: { podeEditar: boolean }) {
+  const aviso = await carregarDestinoDoAviso();
+
+  return (
+    <DestinoDoAviso
+      grupos={aviso.grupos}
+      jidAtual={aviso.jid}
+      nomeAtual={aviso.nome}
+      podeEditar={podeEditar}
+    />
+  );
+}
+
+/**
+ * Configuração do aviso e os grupos entre os quais escolher.
+ *
+ * A lista é ordenada por nome e CORTADA: um seletor de centenas de itens
+ * não é um seletor, é uma busca. Quem não achar o grupo aqui sincroniza
+ * de novo no SendZap, que é onde essa lista nasce.
+ */
+async function carregarDestinoDoAviso(): Promise<{
+  grupos: GrupoDisponivel[];
+  jid: string | null;
+  nome: string | null;
+}> {
+  if (isDemoMode) {
+    return {
+      grupos: [{ jid: "120363000000000000@g.us", name: "Send — Mídia" }],
+      jid: null,
+      nome: null,
+    };
+  }
+
+  try {
+    const admin = createSupabaseAdminClient();
+
+    const [{ data: config }, { data: grupos }] = await Promise.all([
+      admin
+        .from("balance_alert_settings")
+        .select("group_jid, group_name")
+        .eq("id", true)
+        .maybeSingle(),
+      admin.from("whatsapp_groups").select("jid, name").order("name").limit(300),
+    ]);
+
+    return {
+      grupos: (grupos ?? []) as GrupoDisponivel[],
+      jid: config?.group_jid ?? null,
+      nome: config?.group_name ?? null,
+    };
+  } catch {
+    /* Migration 45 ainda não rodada: a página inteira não pode cair por
+       causa do seletor. Sem grupos ele aparece dizendo que ninguém está
+       sendo avisado — que é a verdade. */
+    return { grupos: [], jid: null, nome: null };
+  }
 }
