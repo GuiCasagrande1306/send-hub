@@ -829,6 +829,18 @@ function AdGallery({ payload }: { payload: ReportPayload }) {
 
   return (
     <View>
+      {/* ⚠️ A RESSALVA EXISTE PARA O CASO EM QUE O NÚMERO NÃO É DESTA
+          JANELA. `ad_creatives` guarda uma foto do último sync; quando a
+          apuração na Graph API não responde, os cards caem nela — e sem
+          esta linha o documento afirmaria, calado, que o gasto de outra
+          janela é o do período. */}
+      {!payload.meta.criativosDoPeriodo && (
+        <Text style={styles.emptyNote}>
+          Não foi possível apurar os anúncios nesta janela — os números
+          abaixo são da última sincronização, não do período deste
+          relatório.
+        </Text>
+      )}
       {payload.creatives.map((ad) => (
         <View key={ad.id} style={styles.adCard} wrap={false}>
           {ad.imageIsRaster && ad.imageUrl ? (

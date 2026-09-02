@@ -73,7 +73,16 @@ export default async function PrintReportPage({
   const data = await getPrintReportData(clientId, periodStart, periodEnd);
   if (!data) notFound();
 
-  const { client, kpis, platforms, platformDetail, creatives, weekly, totals } =
+  const {
+    client,
+    kpis,
+    platforms,
+    platformDetail,
+    creatives,
+    criativosDoPeriodo,
+    weekly,
+    totals,
+  } =
     data;
   const brand = client.brand_primary ?? "#141413";
   const periodo = formatPeriod(periodStart, periodEnd);
@@ -411,6 +420,20 @@ export default async function PrintReportPage({
           <p className="mt-1 text-[12px] text-[#64707d]">
             Criativos ativos no período, com o desempenho individual de cada um.
           </p>
+
+          {/* ⚠️ A RESSALVA EXISTE PARA O CASO EM QUE O NÚMERO NÃO É
+              DESTA JANELA. `ad_creatives` guarda uma foto do último
+              sync; quando a apuração na Graph API não responde, os
+              cards caem nela — e sem esta linha o documento afirmaria,
+              calado, que o gasto de outra janela é o do período. */}
+          {!criativosDoPeriodo && creatives.length > 0 && (
+            <p className="mt-3 rounded-lg bg-[#fff4e5] px-3 py-2 text-[11px] text-[#8a5300]">
+              Não foi possível apurar os anúncios nesta janela — os
+              números abaixo são da última sincronização, não do período
+              do relatório. Não envie esta página ao cliente sem
+              conferir.
+            </p>
+          )}
 
           {creatives.length === 0 ? (
             <p className="mt-10 rounded-xl border border-dashed border-[#d8dce2] py-14 text-center text-[12px] text-[#8b95a1]">

@@ -13,6 +13,8 @@ import {
   type TrendPoint,
 } from "@/lib/metrics/kpi";
 import { formatPeriod } from "@/lib/format";
+import { aplicarMetricas } from "./print-data";
+import { metricasDeCriativosNoPeriodo } from "./creative-insights";
 import { mensagemDoCliente } from "./mensagem-do-cliente";
 import { sessionSource, type ReportSource } from "./source";
 import {
@@ -57,6 +59,16 @@ export interface ReportPayload {
     days: number;
     templateName: string;
     accent: string;
+    /**
+     * Os números da galeria são DESTA janela?
+     *
+     * `false` quando a apuração na Graph API não respondeu e os cards
+     * caíram no que `ad_creatives` tinha — o gasto da última
+     * sincronização, que é outra janela. O documento precisa dizer
+     * isso: um número de setembro sob um relatório de agosto, sem
+     * ressalva, é pior que nenhum número.
+     */
+    criativosDoPeriodo: boolean;
   };
   client: {
     id: string;
@@ -128,10 +140,18 @@ export async function buildReportPayload(options: {
   const gallery = template.sections.find((s) => s.type === "ad_gallery");
   const creativeLimit = Number(gallery?.options?.limit ?? 6);
 
-  const [metrics, creatives] = await Promise.all([
+  /* CANDIDATOS, e o corte vem depois. Pedir `creativeLimit` aqui era
+     cortar por `spend_cents`, a coluna com o gasto da ÚLTIMA
+     sincronização — os seis anúncios que mais gastaram ontem, com os
+     números de ontem, sob o rótulo do período do relatório. Ver o
+     cabeçalho de `creative-insights.ts`. */
+  const [metrics, candidatos, metricasDoPeriodo] = await Promise.all([
     source.metrics(client.id, periodStart, periodEnd),
-    source.creatives(client.id, creativeLimit),
+    source.creatives(client.id, 48),
+    metricasDeCriativosNoPeriodo(client.id, periodStart, periodEnd),
   ]);
+
+  const creatives = aplicarMetricas(candidatos, metricasDoPeriodo, creativeLimit);
 
   /* O template define QUAIS KPIs aparecem, em que ordem e COMO SE
      CHAMAM. O rótulo é do template, não da métrica: o mesmo
@@ -153,6 +173,7 @@ export async function buildReportPayload(options: {
       days: metrics.period.days,
       templateName: template.name,
       accent: template.theme.accent ?? "#7BF178",
+      criativosDoPeriodo: metricasDoPeriodo !== null,
     },
     client: {
       id: client.id,

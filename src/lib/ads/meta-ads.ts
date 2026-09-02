@@ -440,6 +440,12 @@ export async function fetchAdInsights(
   since: string,
   until: string,
   conversionActionTypes: string[],
+  /**
+   * Teto da chamada. O padrão de 25s é o da sincronização noturna, em
+   * que ninguém espera. Quem chama COM ALGUÉM NA TELA passa um teto
+   * curto: uma conta lenta não pode custar o relatório das outras.
+   */
+  timeoutMs = 25_000,
 ): Promise<Map<string, AdInsight>> {
   const accountId = externalAccountId.startsWith("act_")
     ? externalAccountId
@@ -463,7 +469,7 @@ export async function fetchAdInsights(
     const response = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${accessToken}` },
       cache: "no-store",
-      signal: AbortSignal.timeout(25_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!response.ok) return mapa;

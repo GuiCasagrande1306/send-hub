@@ -1,6 +1,10 @@
 import "server-only";
 
 import { tiposDeConversaoDoCliente } from "@/lib/ads/conversao-do-cliente";
+import {
+  metricasDeCriativosNoPeriodo,
+  type MetricasDeCriativo,
+} from "./creative-insights";
 import { isDemoMode } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
@@ -81,6 +85,16 @@ export interface PrintReportData {
    */
   platformDetail: PlatformDetail[];
   creatives: AdCreative[];
+  /**
+   * Os números da galeria são DESTA janela?
+   *
+   * `false` quando a apuração na Graph API não respondeu e os cards
+   * caíram no que `ad_creatives` tinha — o gasto da última
+   * sincronização, que é outra janela. A folha precisa dizer isso: um
+   * número de setembro sob um relatório de agosto, sem ressalva, é pior
+   * que nenhum número.
+   */
+  criativosDoPeriodo: boolean;
   /** Agregado por semana — o gráfico do resumo executivo. */
   weekly: { label: string; spend: number; results: number }[];
   totals: { spendCents: number; results: number };
@@ -136,29 +150,80 @@ export async function getPrintReportData(
       .eq("client_id", clientId)
       .gte("metric_date", prev.start)
       .lte("metric_date", prev.end),
+    /* CANDIDATOS, não a lista final. O corte em seis passou a ser feito
+       DEPOIS de apurar a janela — ordenar por `spend_cents` aqui é
+       ordenar pelo gasto da última sincronização, que é justamente o
+       número errado. 48 cobre com folga a carteira: a conta com mais
+       anúncios ativos tem uma dúzia. */
     admin
       .from("ad_creatives")
       .select("*")
       .eq("client_id", clientId)
       .eq("is_active", true)
       .order("spend_cents", { ascending: false })
-      .limit(6),
+      .limit(48),
   ]);
 
   if (!clientRes.data) return null;
 
   const client = clientRes.data as Client;
 
+  /* O gasto de cada anúncio NA JANELA DO RELATÓRIO, direto da Graph
+     API. `ad_creatives` guarda uma foto do último sync — ver o cabeçalho
+     de `creative-insights.ts`. */
+  const metricasDoPeriodo = await metricasDeCriativosNoPeriodo(
+    clientId,
+    periodStart,
+    periodEnd,
+  );
+
   return assemble(
     client,
     (current.data ?? []) as DailyMetric[],
     (previous.data ?? []) as DailyMetric[],
-    (creatives.data ?? []) as AdCreative[],
+    aplicarMetricas((creatives.data ?? []) as AdCreative[], metricasDoPeriodo, 6),
     periodStart,
     periodEnd,
     await rotulosDoTemplate(client),
     await tiposDeConversaoDoCliente(clientId),
+    metricasDoPeriodo !== null,
   );
+}
+
+/**
+ * Aplica as métricas do período aos criativos e reordena.
+ *
+ * O corte em seis era feito no banco, ordenado por `spend_cents` — a
+ * coluna com o gasto da ÚLTIMA sincronização. Números de uma janela em
+ * cards escolhidos por outra: a galeria mostrava os anúncios que mais
+ * gastaram ONTEM com os valores de ontem, sob um relatório de agosto.
+ *
+ * `null` = não deu para apurar: mantém o que veio do banco, sem zerar.
+ * Zerar seria trocar um número errado por outro, e o de agora ao menos
+ * é o gasto real de ALGUMA janela.
+ */
+export function aplicarMetricas(
+  criativos: AdCreative[],
+  metricas: Map<string, MetricasDeCriativo> | null,
+  limite: number,
+): AdCreative[] {
+  if (!metricas) return criativos.slice(0, limite);
+
+  return [...criativos]
+    .map((ad) => {
+      const m = metricas.get(ad.external_ad_id);
+      /* Sem linha nos insights = não veiculou na janela. Zero aqui é
+         verdade, porque o mapa veio preenchido. */
+      return {
+        ...ad,
+        spend_cents: m?.spendCents ?? 0,
+        conversions: m?.conversions ?? 0,
+        impressions: m?.impressions ?? 0,
+        clicks: m?.clicks ?? 0,
+      };
+    })
+    .sort((a, b) => b.spend_cents - a.spend_cents)
+    .slice(0, limite);
 }
 
 function assemble(
@@ -170,12 +235,14 @@ function assemble(
   periodEnd: string,
   rotulos: Partial<Record<MetricKey, string>> = {},
   tiposDeConversao: string[] = [],
+  criativosDoPeriodo = false,
 ): PrintReportData {
   const currentTotals = sumMetrics(current, tiposDeConversao);
   const previousTotals = sumMetrics(previous, tiposDeConversao);
 
   return {
     client,
+    criativosDoPeriodo,
     // Mesmas funções do dashboard: é o que garante que o PDF entregue ao
     // cliente não divirja do número que o gestor vê na tela.
     kpis: HERO_METRICS.map((key) => {
