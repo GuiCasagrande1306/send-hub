@@ -10,6 +10,7 @@ import {
   View,
 } from "@react-pdf/renderer";
 
+import { copyDoAnuncio, semEmoji } from "./texto-seguro";
 import type { ReportPayload } from "@/lib/reports/payload";
 import { payloadHeadline } from "@/lib/reports/payload";
 import {
@@ -278,20 +279,25 @@ const styles = StyleSheet.create({
   splitMeta: { fontSize: 7.5, color: INK_SOFT, marginTop: 4 },
 
   /* -------------------------- Criativos ------------------------- */
+  /* CARTÃO COMPACTO. Com miniatura de 92 e folga de 12, seis anúncios
+     ocupavam quase duas folhas e o cliente rolava duas telas para ver
+     quatro. Nada de informação saiu; o que encolheu foi o espaço em
+     volta dela. A miniatura em 46 continua reconhecível — é o quadro do
+     vídeo, e quem lê reconhece o anúncio pela cor e pelo rosto. */
   adCard: {
     flexDirection: "row",
-    gap: 12,
-    padding: 12,
-    marginBottom: 10,
-    borderRadius: 8,
+    gap: 8,
+    padding: 8,
+    marginBottom: 6,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: HAIRLINE,
   },
-  adThumb: { width: 92, height: 92, borderRadius: 6, objectFit: "cover" },
+  adThumb: { width: 46, height: 46, borderRadius: 4, objectFit: "cover" },
   adPlaceholder: {
-    width: 92,
-    height: 92,
-    borderRadius: 6,
+    width: 46,
+    height: 46,
+    borderRadius: 4,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -409,8 +415,31 @@ export function ReportDocument({ payload }: { payload: ReportPayload }) {
             );
           }
 
+          /* ⚠️ A GALERIA PRECISA PODER QUEBRAR ENTRE PÁGINAS, e o resto
+             não. `wrap={false}` valia para toda seção — com seis cartões
+             de anúncio a galeria fica mais alta que uma folha, o
+             react-pdf avisa
+
+               Node of type VIEW can't wrap between pages and it's
+               bigger than available page height
+
+             e desenha tudo POR CIMA: a copy do anúncio atravessa a linha
+             de métricas, a miniatura vaza a borda do cartão, e o cliente
+             recebe um documento ilegível. Cada CARTÃO continua
+             `wrap={false}` — ele cabe numa folha e não deve ser partido
+             ao meio.
+
+             As demais seções seguem inteiriças: são curtas, e quebrar um
+             gráfico ou uma tabela de campanhas ao meio é pior do que
+             empurrá-los para a página seguinte. */
+          const galeria = section.type === "ad_gallery";
+
           return (
-            <View key={`${section.type}-${index}`} style={styles.section} wrap={false}>
+            <View
+              key={`${section.type}-${index}`}
+              style={styles.section}
+              wrap={galeria}
+            >
               <Text style={styles.h2}>{section.title}</Text>
               {/* Gráficos usam a cor da marca DO CLIENTE, não o acento da
                   agência: o documento é lido por ele, e o neon do template
@@ -863,12 +892,33 @@ function AdGallery({ payload }: { payload: ReportPayload }) {
           )}
 
           <View style={{ flex: 1 }}>
+            {/* SEM NOME DE CAMPANHA, SEM O SEPARADOR. `campaign_name`
+                vem nulo em 100% dos criativos que a Meta devolve — o
+                cartão imprimia "META ADS · —", e um traço pendurado
+                depois de um ponto médio lê como campo que falhou.
+                Melhor dizer só a plataforma, que é verdade inteira. */}
             <Text style={styles.adPlatform}>
-              {ad.platformLabel} · {ad.campaignName ?? "—"}
+              {ad.campaignName
+                ? `${ad.platformLabel} · ${ad.campaignName}`
+                : ad.platformLabel}
             </Text>
-            <Text style={styles.adHeadline}>{ad.headline ?? ad.adName ?? "—"}</Text>
-            {ad.primaryText && (
-              <Text style={styles.adCopy}>{truncate(ad.primaryText, 190)}</Text>
+            <Text style={styles.adHeadline}>
+              {semEmoji(ad.headline ?? ad.adName ?? "—") || "—"}
+            </Text>
+            {/* 110 e não 190: com o cartão compacto, a copy longa era o
+                que ainda empurrava a galeria para uma segunda folha. O
+                anúncio se reconhece pela primeira frase — o texto
+                inteiro está na plataforma, não é o PDF que arquiva copy.
+
+                `copyDoAnuncio` limpa ANTES de cortar: cortar primeiro
+                gastaria parte do limite com caractere que vai sumir e,
+                pior, o corte pode cair no meio de um par de substitutos
+                e deixar meio emoji — que é exatamente o lixo que esta
+                limpeza existe para tirar. */}
+            {copyDoAnuncio(ad.primaryText, 110) && (
+              <Text style={styles.adCopy}>
+                {copyDoAnuncio(ad.primaryText, 110)}
+              </Text>
             )}
 
             <View style={styles.adMetrics}>
@@ -905,11 +955,4 @@ function AdGallery({ payload }: { payload: ReportPayload }) {
 }
 
 /** Corta no limite de palavra — corte no meio da palavra parece defeito. */
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const cut = text.slice(0, max);
-  const lastSpace = cut.lastIndexOf(" ");
-  return `${cut.slice(0, lastSpace > 0 ? lastSpace : max)}…`;
-}
-
 export { payloadHeadline };

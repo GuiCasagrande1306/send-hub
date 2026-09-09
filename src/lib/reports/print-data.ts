@@ -222,6 +222,22 @@ export function aplicarMetricas(
         clicks: m?.clicks ?? 0,
       };
     })
+    /* ⚠️ QUEM NÃO VEICULOU NA JANELA SAI DA GALERIA. A seção se chama
+       "Anúncios no ar" e fala do período da capa; um anúncio criado
+       depois dele aparecia ali com "R$ 0,00 · 0 resultados · 0,00%",
+       porque a lista era preenchida até seis a qualquer custo.
+
+       Visto no relatório de agosto de uma conta de delivery: três dos
+       seis cartões eram anúncios de 02/09 e 08/09 — criados DEPOIS do
+       mês fechado. Zero legítimo (anúncio no ar que não gastou) e zero
+       por não existir ainda são coisas diferentes, e o cliente não tem
+       como distinguir.
+
+       O corte é por IMPRESSÃO e não por gasto: anúncio que entregou sem
+       consumir verba no período ainda rodou, e some dele seria esconder
+       entrega real. Menos de seis cartões é resposta honesta — melhor
+       do que completar com quem não estava lá. */
+    .filter((ad) => ad.impressions > 0)
     .sort((a, b) => b.spend_cents - a.spend_cents)
     .slice(0, limite);
 }
