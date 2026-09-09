@@ -6,7 +6,10 @@ import type { ZodError } from "zod";
 import { isDemoMode } from "@/lib/env";
 import { brandColorFromName } from "@/lib/brand-color";
 import { dataNoBrasil, mesCorrenteBR } from "@/lib/date-br";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  createSupabaseServerClient,
+  getCurrentUser,
+} from "@/lib/supabase/server";
 import {
   defaultGoalMetricFor,
   parseGoalInput,
@@ -910,4 +913,50 @@ export async function checkInstagramAction(input: {
     "@/lib/instagram/connection"
   );
   return { ok: true, dados: await checkInstagramConnection(input.clientId) };
+}
+
+/* =====================================================================
+   O link público do cliente
+   ---------------------------------------------------------------------
+   Emitir é abrir investimento, receita e campanhas de uma conta para
+   quem tiver o endereço. Revogar é cortar o acesso. Nenhuma das duas é
+   decisão de quem está operando hoje — por isso as duas checam admin
+   aqui E são barradas pela policy `client_share_links_escrita`.
+
+   A checagem daqui existe para dar uma FRASE: a policy sozinha recusa
+   com 42501, que na tela vira "permissão negada" sem dizer de quê.
+   ===================================================================== */
+
+export async function emitirLinkPublico(input: {
+  clientId: string;
+}): Promise<{ ok: true; token: string } | { ok: false; error: string }> {
+  const user = await getCurrentUser();
+  if (user?.role !== "admin") {
+    return { ok: false, error: "Só administradores emitem o link público." };
+  }
+  if (isDemoMode) return { ok: false, error: "Em modo demonstração não há link." };
+
+  const { criarLinkPublico } = await import("@/lib/reports/share-link");
+  const r = await criarLinkPublico(input.clientId, user.id);
+  if (!r.ok) return r;
+
+  revalidatePath(`/clientes`, "layout");
+  return { ok: true, token: r.link.token };
+}
+
+export async function revogarLinkPublicoAction(input: {
+  clientId: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const user = await getCurrentUser();
+  if (user?.role !== "admin") {
+    return { ok: false, error: "Só administradores revogam o link público." };
+  }
+  if (isDemoMode) return { ok: false, error: "Em modo demonstração não há link." };
+
+  const { revogarLinkPublico } = await import("@/lib/reports/share-link");
+  const r = await revogarLinkPublico(input.clientId);
+  if (!r.ok) return r;
+
+  revalidatePath(`/clientes`, "layout");
+  return { ok: true };
 }

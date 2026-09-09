@@ -72,7 +72,20 @@ export async function proxy(request: NextRequest) {
      * token HMAC de vida curta na query e responde 404 sem ele — ver
      * `lib/reports/print-token.ts`.
      */
-    pathname.startsWith("/reports/render/");
+    pathname.startsWith("/reports/render/") ||
+    /**
+     * O painel público do cliente, aberto por link.
+     *
+     * Quem abre é o cliente final, que NÃO tem conta no sistema — com o
+     * redirect ligado ele cairia em /login e o link não serviria para
+     * nada.
+     *
+     * "Público" aqui é só quanto a sessão: a própria página exige um
+     * token de 256 bits que existe em `client_share_links`, responde 404
+     * sem ele, e só enxerga a conta dona daquele token. Ver
+     * `lib/reports/share-link.ts`.
+     */
+    pathname.startsWith("/p/");
 
   /**
    * Rotas de API nunca são redirecionadas.

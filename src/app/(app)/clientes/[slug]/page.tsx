@@ -2,6 +2,9 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 
 import { ClientDashboard } from "@/components/dashboard/ClientDashboard";
+import { LinkPublico } from "@/components/clients/link-publico";
+import { linkAtivoDoCliente } from "@/lib/reports/share-link";
+import { getCurrentUser } from "@/lib/supabase/server";
 import {
   getClientBySlug,
   getClientIntegrations,
@@ -161,7 +164,13 @@ export default async function ClientPage({
     roas: trend.map((p) => (p.spend === 0 ? 0 : p.revenue / p.spend)),
   };
 
+  const [usuario, linkPublico] = await Promise.all([
+    getCurrentUser(),
+    linkAtivoDoCliente(client.id),
+  ]);
+
   return (
+    <>
     <ClientDashboard
       client={client}
       kpis={kpis}
@@ -194,6 +203,20 @@ export default async function ClientPage({
           : null
       }
     />
+
+      {/* DEPOIS do painel, e não antes: quem abre esta tela vem ver o
+          desempenho da conta. O link é operação de bastidor — importante,
+          mas não é a pergunta que trouxe a pessoa aqui. */}
+      <div className="mx-auto w-full max-w-7xl px-4 pb-10 sm:px-6">
+        <LinkPublico
+          clientId={client.id}
+          token={linkPublico?.token ?? null}
+          criadoEm={linkPublico?.criadoEm ?? null}
+          ultimoAcesso={linkPublico?.ultimoAcesso ?? null}
+          podeEditar={usuario?.role === "admin"}
+        />
+      </div>
+    </>
   );
 }
 
