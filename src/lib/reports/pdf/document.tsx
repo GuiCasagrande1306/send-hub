@@ -11,6 +11,7 @@ import {
 } from "@react-pdf/renderer";
 
 import { copyDoAnuncio, semEmoji } from "./texto-seguro";
+import { corpoQueCabe } from "./medida";
 import type { ReportPayload } from "@/lib/reports/payload";
 import { payloadHeadline } from "@/lib/reports/payload";
 import {
@@ -110,6 +111,40 @@ Font.register({
    passando para a linha seguinte. */
 Font.registerHyphenationCallback((palavra) => [palavra]);
 
+/* ------------------------------------------------------------------ */
+/* Medidas que o layout e a conta de largura compartilham              */
+/* ------------------------------------------------------------------ */
+
+/* Constantes, e não números soltos no StyleSheet, porque `corpoQueCabe`
+   precisa saber a largura exata do cartão. Se a margem mudar só no
+   estilo, a conta passa a medir um cartão que não existe mais — e o
+   valor volta a quebrar calado. */
+const LARGURA_A4 = 595.28;
+const MARGEM_PAGINA = 44;
+const MARGEM_CAPA = 48;
+const VAO_KPI = 10;
+const RESPIRO_KPI = 14;
+const COLUNAS_KPI = 3;
+const CORPO_VALOR = 20;
+
+/** Largura útil do número dentro de um cartão de KPI. */
+function larguraDoValor(margem: number): number {
+  const util = LARGURA_A4 - 2 * margem;
+  return (util - (COLUNAS_KPI - 1) * VAO_KPI) / COLUNAS_KPI - 2 * RESPIRO_KPI;
+}
+
+/**
+ * O corpo da LINHA de cartões: o menor que faz todos caberem.
+ *
+ * Por linha, e não por cartão. Três números lado a lado em corpos
+ * diferentes leem como hierarquia — o maior parece o mais importante —,
+ * e a diferença seria só de quantos dígitos cada um tem.
+ */
+function corpoDaLinha(valores: string[], margem: number): number {
+  const largura = larguraDoValor(margem);
+  return Math.min(...valores.map((v) => corpoQueCabe(v, largura, CORPO_VALOR)));
+}
+
 const INK = "#141413";
 const INK_SOFT = "#5C5C57";
 const HAIRLINE = "#E4E2DD";
@@ -121,7 +156,7 @@ const styles = StyleSheet.create({
   page: {
     paddingTop: 44,
     paddingBottom: 56,
-    paddingHorizontal: 44,
+    paddingHorizontal: MARGEM_PAGINA,
     fontSize: 9.5,
     fontFamily: "Geist",
     color: INK,
@@ -130,7 +165,7 @@ const styles = StyleSheet.create({
 
   /* ---------------------------- Capa ---------------------------- */
   cover: { padding: 0, fontFamily: "Geist", color: INK },
-  coverBand: { height: 300, paddingTop: 56, paddingHorizontal: 48 },
+  coverBand: { height: 300, paddingTop: 56, paddingHorizontal: MARGEM_CAPA },
   coverEyebrow: {
     fontSize: 8,
     letterSpacing: 2,
@@ -146,7 +181,7 @@ const styles = StyleSheet.create({
     lineHeight: 1.1,
   },
   coverPeriod: { fontSize: 11, color: "#FFFFFF", opacity: 0.9, marginTop: 12 },
-  coverBody: { paddingHorizontal: 48, paddingTop: 36 },
+  coverBody: { paddingHorizontal: MARGEM_CAPA, paddingTop: 36 },
 
   /* -------------------------- Estrutura ------------------------- */
   eyebrow: {
@@ -186,10 +221,10 @@ const styles = StyleSheet.create({
   },
 
   /* ---------------------------- KPIs ---------------------------- */
-  kpiRow: { flexDirection: "row", gap: 10, marginBottom: 10 },
+  kpiRow: { flexDirection: "row", gap: VAO_KPI, marginBottom: 10 },
   kpiCard: {
     flex: 1,
-    padding: 14,
+    padding: RESPIRO_KPI,
     borderRadius: 8,
     backgroundColor: SURFACE,
     borderWidth: 1,
@@ -201,7 +236,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     color: INK_SOFT,
   },
-  kpiValue: { fontSize: 20, fontFamily: "Geist", fontWeight: 700, marginTop: 7 },
+  kpiValue: { fontSize: CORPO_VALOR, fontFamily: "Geist", fontWeight: 700, marginTop: 7 },
   kpiDelta: { fontSize: 8, marginTop: 6 },
   kpiPrev: { fontSize: 7.5, color: INK_SOFT, marginTop: 2 },
   /* O selo da campanha de origem. Fica ACIMA do delta e abaixo do
@@ -262,6 +297,10 @@ const styles = StyleSheet.create({
     color: INK_SOFT,
   },
   td: { fontSize: 8.5 },
+  /* Corta em uma linha com reticências. No react-pdf isto é ESTILO, não
+     propriedade do <Text> — e o motor mede a largura real, coisa que um
+     corte por número de caracteres não faz. */
+  umaLinha: { maxLines: 1, textOverflow: "ellipsis" },
 
   splitRow: { marginBottom: 12 },
   splitHead: {
@@ -473,6 +512,9 @@ export function ReportDocument({ payload }: { payload: ReportPayload }) {
 
 function CoverSummary({ payload }: { payload: ReportPayload }) {
   const top = payload.kpis.slice(0, 3);
+  /* MARGEM_CAPA, não MARGEM_PAGINA: a capa tem respiro maior, e o cartão
+     dela é 2,6pt mais estreito que o das outras páginas. */
+  const corpo = corpoDaLinha(top.map((k) => k.formatted), MARGEM_CAPA);
 
   return (
     <View>
@@ -481,7 +523,9 @@ function CoverSummary({ payload }: { payload: ReportPayload }) {
         {top.map((kpi) => (
           <View key={kpi.key} style={styles.kpiCard}>
             <Text style={styles.kpiLabel}>{kpi.label}</Text>
-            <Text style={styles.kpiValue}>{kpi.formatted}</Text>
+            <Text style={[styles.kpiValue, { fontSize: corpo }]}>
+              {kpi.formatted}
+            </Text>
             <SeloDeOrigem kpi={kpi} />
             <DeltaText kpi={kpi} />
           </View>
@@ -609,6 +653,70 @@ function SectionBody({
  * vem só com quem teve linha. Uma conta que só roda Meta não recebe uma
  * página de Google zerada.
  */
+/* ------------------------------------------------------------------ */
+/* Quantas campanhas cabem na página da plataforma                     */
+/* ------------------------------------------------------------------ */
+
+/* ⚠️ ALTURAS MEDIDAS, não estimadas. Saíram do PDF renderizado, lendo a
+   posição de cada linha com pdfjs, em 15/09/2026:
+
+     linha de cartões de KPI ............ 105,7pt
+     + selo "de N campanhas" na linha ...   9,5pt
+     linha da tabela de campanhas ........ 22,0pt
+     1ª linha da tabela, com 4 linhas de
+       cartões sem selo .................. 650,4pt do topo
+     fim do miolo da folha ............... 785,9pt (A4 − respiro de 56)
+
+   O TETO ERA SEIS, FIXO, e estava errado para o caso mais comum. Com
+   onze KPIs (conta com receita: delivery e e-commerce) e o selo nos
+   cartões de custo e de ROAS, só QUATRO linhas cabem. As outras duas
+   empurravam "Mais N campanhas" para uma folha nova — que saía com uma
+   linha só, ou em branco quando a margem da seção transbordava sozinha.
+
+   Se o desenho do cartão ou da tabela mudar, estes números precisam ser
+   medidos de novo. O erro, se houver, aparece como página órfã no fim
+   da plataforma — não como texto sobreposto. */
+const PASSO_LINHA_DE_CARTOES = 105.7;
+const ACRESCIMO_DO_SELO = 9.5;
+const PASSO_LINHA_DA_TABELA = 22;
+const PRIMEIRA_LINHA_SEM_CARTOES = 650.4 - 4 * PASSO_LINHA_DE_CARTOES;
+const FIM_DO_MIOLO = 841.89 - 56;
+/** Da última linha até o fim da nota "Mais N campanhas". */
+const ALTURA_DA_NOTA = 31.5;
+/** Fim de uma linha de tabela abaixo da linha de base. */
+const DESCIDA_DA_LINHA = 8.5;
+/** Arredondamento do layout e a diferença entre medir e renderizar. */
+const FOLGA = 10;
+
+function linhasDeCampanhaQueCabem(
+  kpis: ReportPayload["kpis"],
+  totalDeCampanhas: number,
+): number {
+  const linhasDeCartoes = Math.ceil(kpis.length / 3);
+  let linhasComSelo = 0;
+  for (let i = 0; i < kpis.length; i += 3) {
+    if (kpis.slice(i, i + 3).some((k) => k.origem !== null)) linhasComSelo++;
+  }
+
+  const primeira =
+    PRIMEIRA_LINHA_SEM_CARTOES +
+    linhasDeCartoes * PASSO_LINHA_DE_CARTOES +
+    linhasComSelo * ACRESCIMO_DO_SELO;
+  const limite = FIM_DO_MIOLO - FOLGA;
+
+  /* Todas cabem sem a nota? Então não há nota, e sobra mais espaço. */
+  const semNota =
+    Math.floor((limite - DESCIDA_DA_LINHA - primeira) / PASSO_LINHA_DA_TABELA) + 1;
+  if (totalDeCampanhas <= semNota) return totalDeCampanhas;
+
+  const comNota =
+    Math.floor((limite - ALTURA_DA_NOTA - primeira) / PASSO_LINHA_DA_TABELA) + 1;
+  /* Nunca zero: uma plataforma com gasto e nenhuma campanha na tabela
+     parece defeito. Na pior combinação medida — onze KPIs, duas linhas
+     com selo — cabem quatro. */
+  return Math.max(1, comNota);
+}
+
 function PlatformPages({
   payload,
   title,
@@ -631,8 +739,14 @@ function PlatformPages({
 
   return (
     <>
-      {payload.platformDetail.map((p) => (
-        <View key={p.platform} style={styles.section} break>
+      {payload.platformDetail.map((p) => {
+        const cabem = linhasDeCampanhaQueCabem(p.kpis, p.campaigns.length);
+        return (
+        /* SEM MARGEM INFERIOR. A página da plataforma ocupa a folha
+           inteira e a próxima começa com `break`; os 26pt de margem da
+           seção não separavam nada e, com a tabela chegando ao fim do
+           miolo, transbordavam sozinhos e abriam uma folha em branco. */
+        <View key={p.platform} style={[styles.section, { marginBottom: 0 }]} break>
           <Text style={[styles.platformBadge, { backgroundColor: accent }]}>
             {p.label}
           </Text>
@@ -670,15 +784,23 @@ function PlatformPages({
                 </Text>
               </View>
 
-              {/* SEIS, e o número foi medido, não escolhido.
-                  Com onze KPIs (quatro linhas de cartões, ~415pt) mais
-                  cabeçalho de tabela e a nota do rodapé, oito linhas
-                  somam ~735pt contra ~697pt úteis da folha — cada
-                  plataforma estourava para uma segunda página que saía
-                  quase vazia. Seis cabe; sete já não. */}
-              {p.campaigns.slice(0, 6).map((c) => (
+              {/* QUANTAS CABEM, e a conta está em
+                  `linhasDeCampanhaQueCabem`. Era seis fixo — o que valia
+                  sem o selo "de N campanhas" nos cartões e deixava de
+                  valer justamente nas contas com receita. */}
+              {p.campaigns.slice(0, cabem).map((c) => (
                 <View key={c.name} style={styles.tableRow}>
-                  <Text style={[styles.td, { flex: 3 }]}>{c.name}</Text>
+                  {/* UMA LINHA, com reticências. Nome que quebrava em
+                      duas deixava a linha da tabela com o dobro da
+                      altura, e as seis linhas medidas para caber na folha
+                      deixavam de caber: sobrava uma página com duas
+                      campanhas sozinhas. O corte por caracteres
+                      (`encurtar`, 42) não bastava — em maiúsculas, que é
+                      a convenção de nome de campanha, 42 caracteres
+                      passam da coluna. Quem mede agora é o motor. */}
+                  <Text style={[styles.td, styles.umaLinha, { flex: 3 }]}>
+                    {c.name}
+                  </Text>
                   <Text style={[styles.td, { flex: 1, textAlign: "right" }]}>
                     {formatCurrency(c.spendCents)}
                   </Text>
@@ -700,17 +822,18 @@ function PlatformPages({
                 </View>
               ))}
 
-              {p.campaigns.length > 6 && (
+              {p.campaigns.length > cabem && (
                 <Text style={[styles.emptyNote, { paddingVertical: 6 }]}>
-                  Mais {p.campaigns.length - 6}{" "}
-                  {p.campaigns.length - 6 === 1 ? "campanha" : "campanhas"} com
+                  Mais {p.campaigns.length - cabem}{" "}
+                  {p.campaigns.length - cabem === 1 ? "campanha" : "campanhas"} com
                   investimento menor.
                 </Text>
               )}
             </View>
           )}
         </View>
-      ))}
+        );
+      })}
     </>
   );
 }
@@ -722,12 +845,16 @@ function KpiCards({ kpis }: { kpis: ReportPayload["kpis"] }) {
 
   return (
     <View>
-      {rows.map((row, rowIndex) => (
+      {rows.map((row, rowIndex) => {
+        const corpo = corpoDaLinha(row.map((k) => k.formatted), MARGEM_PAGINA);
+        return (
         <View key={rowIndex} style={styles.kpiRow}>
           {row.map((kpi) => (
             <View key={kpi.key} style={styles.kpiCard}>
               <Text style={styles.kpiLabel}>{kpi.label}</Text>
-              <Text style={styles.kpiValue}>{kpi.formatted}</Text>
+              <Text style={[styles.kpiValue, { fontSize: corpo }]}>
+                {kpi.formatted}
+              </Text>
               <SeloDeOrigem kpi={kpi} />
               <DeltaText kpi={kpi} />
             </View>
@@ -738,7 +865,8 @@ function KpiCards({ kpis }: { kpis: ReportPayload["kpis"] }) {
               <View key={`spacer-${i}`} style={{ flex: 1 }} />
             ))}
         </View>
-      ))}
+        );
+      })}
     </View>
   );
 }
@@ -897,7 +1025,7 @@ function AdGallery({ payload }: { payload: ReportPayload }) {
                 cartão imprimia "META ADS · —", e um traço pendurado
                 depois de um ponto médio lê como campo que falhou.
                 Melhor dizer só a plataforma, que é verdade inteira. */}
-            <Text style={styles.adPlatform}>
+            <Text style={[styles.adPlatform, styles.umaLinha]}>
               {ad.campaignName
                 ? `${ad.platformLabel} · ${ad.campaignName}`
                 : ad.platformLabel}
