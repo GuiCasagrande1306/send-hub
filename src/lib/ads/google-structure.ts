@@ -66,7 +66,7 @@ export async function fetchGoogleStructure(
   until: string,
 ): Promise<NoDaArvore[]> {
   if (
-    !serverEnv.googleAdsDeveloperToken ||
+    !serverEnv.googleAdsClientId ||
     !externalAccountId ||
     externalAccountId.startsWith("pending:") ||
     !refreshToken
@@ -86,7 +86,6 @@ export async function fetchGoogleStructure(
         method: "POST",
         headers: {
           Authorization: `Bearer ${token.accessToken}`,
-          "developer-token": serverEnv.googleAdsDeveloperToken,
           ...(serverEnv.googleAdsLoginCustomerId
             ? {
                 "login-customer-id": normalizeCustomerId(

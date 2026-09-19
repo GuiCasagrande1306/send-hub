@@ -75,8 +75,10 @@ export const serverEnv = {
   instagramAppId: process.env.INSTAGRAM_APP_ID ?? "",
   instagramAppSecret: process.env.INSTAGRAM_APP_SECRET ?? "",
 
-  // Google Ads API
-  googleAdsDeveloperToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN ?? "",
+  /* Google Ads API. NÃO há developer token: o Google desligou em
+     09/09/2026. O nível de acesso agora é do projeto do Google Cloud
+     que emitiu este client id, e o cabeçalho antigo é ignorado pelo
+     servidor — será rejeitado numa major futura da API. */
   googleAdsClientId: process.env.GOOGLE_ADS_CLIENT_ID ?? "",
   googleAdsClientSecret: process.env.GOOGLE_ADS_CLIENT_SECRET ?? "",
   googleAdsLoginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID ?? "",

@@ -14,7 +14,7 @@ import type { AdsProvider, NormalizedMetricRow, ProviderResult } from "./types";
    Google Ads — searchStream (API v21)
    ---------------------------------------------------------------------
    POST /v21/customers/{customerId}/googleAds:searchStream
-   Headers: Authorization, developer-token, login-customer-id
+   Headers: Authorization, login-customer-id
 
    Três armadilhas específicas desta API:
 
@@ -41,13 +41,18 @@ import type { AdsProvider, NormalizedMetricRow, ProviderResult } from "./types";
    deixou de existir. Medido em 07/08/2026: v18 e v19 dão 404; v20 e v21
    respondem.
 
-   ⚠️ ATUALIZADA PARA v24 EM 11/08/2026, E AINDA NÃO EXERCITADA CONTRA A
-   API DE VERDADE — não há developer token nesta instalação. O Google
-   mantém só as três majors mais recentes, e a v21 saiu dessa janela: o
+   ⚠️ ATUALIZADA PARA v24 EM 11/08/2026. O Google mantém só as três
+   majors mais recentes, e a v21 saiu dessa janela: o
    `UNSUPPORTED_VERSION` "intermitente" que `google-balance.ts` contorna
    com uma repetição não é instabilidade, é o desligamento entrando no
-   ar aos poucos. Ficar na v21 era falha garantida; a v24 é a aposta
-   conservadora dentro do que ainda vive.
+   ar aos poucos. Em 19/09/2026 a v25 já está publicada, então a v24
+   segue dentro da janela — mas é a mais velha das três, e é ela que sai
+   na próxima virada.
+
+   Um motivo a mais para não pular para a v25 sem pensar: é nela que
+   aparece o erro CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION quando o
+   projeto do Cloud está só com acesso de Teste. Nas versões anteriores
+   o mesmo caso vem como ACTION_NOT_PERMITTED.
 
    Ao conectar o Google pela primeira vez, confirme aqui antes de
    procurar o erro em outro lugar. Se aparecer HTML no lugar de JSON, é
@@ -92,16 +97,12 @@ export const googleAdsProvider: AdsProvider = {
   label: "Google Ads",
 
   async fetchMetrics(request): Promise<ProviderResult> {
-    if (
-      !serverEnv.googleAdsDeveloperToken ||
-      !serverEnv.googleAdsClientId ||
-      !serverEnv.googleAdsClientSecret
-    ) {
+    if (!serverEnv.googleAdsClientId || !serverEnv.googleAdsClientSecret) {
       return {
         ok: false,
         code: "not_configured",
         message:
-          "Credenciais do Google Ads ausentes. O developer token depende de aprovação do Google.",
+          "Credenciais do Google Ads ausentes. Defina GOOGLE_ADS_CLIENT_ID e GOOGLE_ADS_CLIENT_SECRET.",
       };
     }
 
@@ -228,7 +229,6 @@ async function buscarJanela(
         method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          "developer-token": serverEnv.googleAdsDeveloperToken,
           ...(serverEnv.googleAdsLoginCustomerId
             ? {
                 "login-customer-id": normalizeCustomerId(

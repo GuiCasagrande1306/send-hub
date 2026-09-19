@@ -54,11 +54,11 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (!serverEnv.googleAdsDeveloperToken || !serverEnv.googleAdsLoginCustomerId) {
+  if (!serverEnv.googleAdsClientId || !serverEnv.googleAdsLoginCustomerId) {
     return NextResponse.json({
       ok: false,
       error:
-        "Google Ads não configurado (developer token e login-customer-id).",
+        "Google Ads não configurado (client id e login-customer-id).",
     });
   }
 
@@ -110,7 +110,6 @@ export async function GET(request: NextRequest) {
 
   const headers = {
     Authorization: `Bearer ${acesso.accessToken}`,
-    "developer-token": serverEnv.googleAdsDeveloperToken,
     "login-customer-id": serverEnv.googleAdsLoginCustomerId.replace(/\D/g, ""),
     "Content-Type": "application/json",
   };

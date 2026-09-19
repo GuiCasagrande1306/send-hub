@@ -91,7 +91,7 @@ const QUERY = `
 export async function fetchGoogleBalances(): Promise<Map<string, SaldoGoogle>> {
   const saldos = new Map<string, SaldoGoogle>();
 
-  if (!serverEnv.googleAdsDeveloperToken || !serverEnv.googleAdsClientId) {
+  if (!serverEnv.googleAdsClientId) {
     return saldos;
   }
 
@@ -161,7 +161,6 @@ async function consultarOrcamento(
           method: "POST",
           headers: {
             Authorization: `Bearer ${accessToken}`,
-            "developer-token": serverEnv.googleAdsDeveloperToken,
             ...(serverEnv.googleAdsLoginCustomerId
               ? {
                   "login-customer-id": normalizeCustomerId(
