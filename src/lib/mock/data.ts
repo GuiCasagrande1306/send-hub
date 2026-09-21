@@ -1293,33 +1293,3 @@ export const demoOptimizations: OptimizationEntry[] = [
   },
 ];
 
-/* ------------------------------------------------------------------ */
-/* SendZap — estado dos números de atendimento                          */
-/* ------------------------------------------------------------------ */
-
-/**
- * Conexões de WhatsApp da carteira, para a demonstração.
- *
- * Sem isto a tela do SendZap abria com quatro contas "sem número" — uma
- * parede de vazio que descreve mal o módulo para quem está avaliando a
- * interface, que é a razão de existir deste arquivo.
- *
- * A mistura é de propósito: uma conta conectada, uma esperando leitura
- * do QR e duas ainda sem número. São os três layouts que o cartão sabe
- * desenhar, e nenhum deles apareceria numa carteira toda igual.
- *
- * ⚠️ NENHUMA destas instâncias existe na Evolution. Em demonstração a
- * rota recusa parear e desconectar (ver `/api/sendzap/session`), então
- * este estado é ilustrativo e nunca vira ação sobre um número real.
- */
-export const demoConnections: Record<
-  string,
-  { state: "open" | "connecting" | "close" | "absent"; phone?: string; profileName?: string }
-> = {
-  "c-verdi": {
-    state: "open",
-    phone: "5548999110022",
-    profileName: "Verdi Cosméticos",
-  },
-  "c-atlas": { state: "connecting" },
-};

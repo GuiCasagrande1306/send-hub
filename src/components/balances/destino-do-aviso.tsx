@@ -195,8 +195,8 @@ export function DestinoDoAviso({
                 </>
               ) : (
                 <>
-                  Esta página só alerta quem a abre. Escolha um grupo do SendZap
-                  para receber as contas críticas de manhã.
+                  Esta página só alerta quem a abre. Escolha um grupo do seu
+                  WhatsApp para receber as contas críticas de manhã.
                 </>
               )}
             </p>

@@ -347,8 +347,8 @@ async function Destino({ podeEditar }: { podeEditar: boolean }) {
  * Configuração do aviso e os grupos entre os quais escolher.
  *
  * A lista é ordenada por nome e CORTADA: um seletor de centenas de itens
- * não é um seletor, é uma busca. Quem não achar o grupo aqui sincroniza
- * de novo no SendZap, que é onde essa lista nasce.
+ * não é um seletor, é uma busca. Quem não achar o grupo aqui clica em
+ * "Buscar meus grupos", que revarre o WhatsApp e regrava a tabela.
  */
 async function carregarDestinoDoAviso(): Promise<{
   grupos: GrupoDisponivel[];
