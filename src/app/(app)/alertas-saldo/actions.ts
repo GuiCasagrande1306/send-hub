@@ -146,3 +146,87 @@ export async function previaDoAvisoDeSaldo(): Promise<
     ? { ok: true, texto }
     : { ok: false, error: "Nenhuma conta crítica agora — não haveria mensagem." };
 }
+
+/* =====================================================================
+   Trazer os grupos do WhatsApp
+   ---------------------------------------------------------------------
+   O seletor lê `whatsapp_groups`, e até aqui quem preenchia essa tabela
+   era SÓ um script de terminal (`scripts/evolution.mjs sincronizar`).
+   Numa instalação nova ninguém roda esse script, então o seletor nascia
+   desabilitado e sem explicação — controle morto na tela é pior que
+   controle ausente, porque parece defeito do sistema.
+
+   O script existe por um motivo real: a varredura da Evolution mediu
+   ~110s numa conta com 231 grupos, e a função da Vercel morre em 60s.
+   Isso continua valendo para conta grande. A diferença é que aqui a
+   busca é um clique DELIBERADO de uma pessoa, e quando o tempo estoura
+   a tela diz o que fazer, em vez de nunca funcionar em conta nenhuma.
+   ===================================================================== */
+
+export async function buscarMeusGrupos(): Promise<
+  { ok: true; total: number } | { ok: false; error: string }
+> {
+  const user = await getCurrentUser();
+  if (user?.role !== "admin") {
+    return { ok: false, error: "Só administradores mexem no destino do aviso." };
+  }
+
+  if (isDemoMode) {
+    return { ok: false, error: "Em modo demonstração não há WhatsApp." };
+  }
+
+  const { getSessionStatus, fetchAllGroups } = await import(
+    "@/lib/whatsapp/session"
+  );
+
+  /* NÃO É REDUNDANTE com a checagem que `buscarGrupos` já faz lá
+     dentro. Quando a varredura falha, `fetchAllGroups` cai na "última
+     lista boa" guardada em memória e devolve `ok:true` — ótimo para
+     PREENCHER um seletor, péssimo para GRAVAR: escreveríamos no banco
+     os grupos de um aparelho que não está mais pareado, e o aviso
+     diário sairia mirando um destino que ninguém consegue postar.
+     Aqui a pergunta é sobre o aparelho, não sobre a lista.
+
+     A frase também diz ONDE se pareia: quem está no aviso de saldo não
+     tem como adivinhar que a resposta mora em outra página. */
+  const sessao = await getSessionStatus(user.id);
+  if (sessao.state !== "open") {
+    return {
+      ok: false,
+      error:
+        "Seu WhatsApp não está conectado. Pareie o celular em Configurações › Meu WhatsApp e tente de novo.",
+    };
+  }
+
+  const r = await fetchAllGroups(user.id);
+  if (!r.ok) return { ok: false, error: r.error };
+
+  const linhas = r.groups
+    .filter((g) => g.id.endsWith("@g.us"))
+    .map((g) => ({
+      user_id: user.id,
+      jid: g.id,
+      name: g.name.trim() || "(sem nome)",
+      updated_at: new Date().toISOString(),
+    }));
+
+  if (linhas.length === 0) {
+    return {
+      ok: false,
+      error: "Este WhatsApp não participa de nenhum grupo.",
+    };
+  }
+
+  /* UPSERT por (user_id, jid), igual ao script: grupo renomeado
+     atualiza, grupo novo entra, e nenhum é apagado. Sair de um grupo
+     não pode zerar o destino já gravado no cadastro de um cliente. */
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
+    .from("whatsapp_groups")
+    .upsert(linhas, { onConflict: "user_id,jid" });
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/alertas-saldo");
+  return { ok: true, total: linhas.length };
+}

@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BellRing, BellOff, Eye, Send } from "lucide-react";
+import { BellRing, BellOff, Eye, RefreshCw, Send } from "lucide-react";
 import { toast } from "sonner";
 
 import {
+  buscarMeusGrupos,
   definirGrupoDoAviso,
   enviarAvisoDeSaldoAgora,
   previaDoAvisoDeSaldo,
@@ -64,7 +66,9 @@ export function DestinoDoAviso({
   const router = useRouter();
   const [valor, setValor] = useState(jidAtual ?? NENHUM);
   const [salvando, iniciar] = useTransition();
-  const [ocupado, setOcupado] = useState<"previa" | "envio" | null>(null);
+  const [ocupado, setOcupado] = useState<"previa" | "envio" | "grupos" | null>(
+    null,
+  );
   const [previa, setPrevia] = useState<string | null>(null);
 
   function escolher(novo: string | null) {
@@ -96,6 +100,28 @@ export function DestinoDoAviso({
         toast.error("Não deu para salvar. Tente de novo.");
       }
     });
+  }
+
+  /* A lista não se preenche sozinha: nada no sistema varre os grupos
+     por conta própria, porque a varredura é a chamada mais cara que
+     temos. Este clique é o gatilho. */
+  async function buscarGrupos() {
+    setOcupado("grupos");
+    try {
+      const r = await buscarMeusGrupos();
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      toast.success(
+        `${r.total} ${r.total === 1 ? "grupo encontrado" : "grupos encontrados"}. Escolha o destino.`,
+      );
+      router.refresh();
+    } catch {
+      toast.error("Não deu para buscar os grupos.");
+    } finally {
+      setOcupado(null);
+    }
   }
 
   async function verPrevia() {
@@ -158,6 +184,15 @@ export function DestinoDoAviso({
                   atenção, sem saldo lido e pós-pagas ficam de fora — aviso que
                   chega todo dia deixa de ser lido, e aí o crítico passa junto.
                 </>
+              ) : grupos.length === 0 ? (
+                <>
+                  Esta página só alerta quem a abre. Ainda não há nenhum grupo
+                  para escolher: conecte seu celular em{" "}
+                  <Link href="/configuracoes" className="underline">
+                    Configurações › Meu WhatsApp
+                  </Link>{" "}
+                  e clique em <strong>Buscar meus grupos</strong>.
+                </>
               ) : (
                 <>
                   Esta página só alerta quem a abre. Escolha um grupo do SendZap
@@ -195,11 +230,34 @@ export function DestinoDoAviso({
             </>
           )}
 
-          {podeEditar ? (
+          {!podeEditar ? (
+            <span className="text-2xs text-muted-foreground">
+              Só administradores mudam o destino.
+            </span>
+          ) : grupos.length === 0 ? (
+            /* SELETOR VAZIO VIRA BOTÃO. Um `select` desabilitado com uma
+               opção só ("Não avisar") não informa nada e parece defeito:
+               a pessoa clica, não abre, e conclui que a tela quebrou.
+               Aqui o mesmo espaço carrega a ação que destrava. */
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={buscarGrupos}
+              disabled={ocupado !== null}
+              title="Lista os grupos do seu WhatsApp e guarda para o seletor."
+            >
+              <RefreshCw
+                className={
+                  ocupado === "grupos" ? "size-3.5 animate-spin" : "size-3.5"
+                }
+              />
+              {ocupado === "grupos" ? "Buscando…" : "Buscar meus grupos"}
+            </Button>
+          ) : (
             <Select
               value={valor}
               onValueChange={escolher}
-              disabled={salvando || grupos.length === 0}
+              disabled={salvando}
             >
               <SelectTrigger className="w-full sm:w-56">
                 <SelectValue>
@@ -220,10 +278,6 @@ export function DestinoDoAviso({
                 ))}
               </SelectContent>
             </Select>
-          ) : (
-            <span className="text-2xs text-muted-foreground">
-              Só administradores mudam o destino.
-            </span>
           )}
         </div>
       </div>
