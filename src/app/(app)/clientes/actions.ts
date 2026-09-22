@@ -820,7 +820,9 @@ export async function setGoogleConversionActions(input: {
   clientId: string;
   /** Lista vazia = voltar ao total da conta. */
   actionIds: string[];
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+}): Promise<
+  { ok: true; warning?: string } | { ok: false; error: string }
+> {
   /* Só dígitos. O id vem de uma lista que o próprio sistema buscou, e
      barrar o resto impede que um rótulo colado por engano vire um
      filtro que não casa com nada — o que apareceria como "0 conversões"
@@ -845,9 +847,32 @@ export async function setGoogleConversionActions(input: {
 
   if (error) return { ok: false, error: error.message };
 
+  /* REPROCESSA AGORA, pelo mesmo motivo de `setAdAccountId`.
+     ---------------------------------------------------------------
+     O painel lê `daily_metrics`, não a API. Sem reprocessar, a escolha
+     só apareceria na rodada do cron, às 06:20 do dia seguinte — e até
+     lá a tela seguiria mostrando o número velho, o que faz o recurso
+     parecer quebrado justamente para quem acabou de usá-lo.
+
+     Falhar aqui NÃO desfaz a escolha: ela já está gravada e o cron
+     reprocessa amanhã. Vira aviso, não erro. */
+  let aviso: string | undefined;
+  try {
+    const { syncAllClients } = await import("@/lib/ads/sync");
+    const r = await syncAllClients({ mode: "month", clientId: input.clientId });
+    if (r.failed > 0) {
+      aviso =
+        r.results.find((x) => !x.ok)?.message ??
+        "Conversão salva, mas não consegui recalcular agora.";
+    }
+  } catch {
+    aviso = "Conversão salva, mas não consegui recalcular agora.";
+  }
+
   revalidatePath("/clientes");
+  revalidatePath("/performance");
   revalidatePath("/");
-  return { ok: true };
+  return aviso ? { ok: true, warning: aviso } : { ok: true };
 }
 
 /**

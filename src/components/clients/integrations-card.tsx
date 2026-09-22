@@ -186,11 +186,16 @@ function LinhaIntegracao({
     startTransition(async () => {
       const r = await setGoogleConversionActions({ clientId, actionIds: ids });
       if (r.ok) {
-        toast.success(
-          ids.length === 0
-            ? "Voltou a contar todas as principais da conta."
-            : "Conversão do Google atualizada.",
-        );
+        /* O aviso do recálculo vem como `warning`, não como erro: a
+           escolha foi gravada de qualquer jeito, e o cron refaz a
+           conta amanhã. Dizer "falhou" faria desfazer o que deu certo. */
+        if (r.warning) toast.warning(r.warning);
+        else
+          toast.success(
+            ids.length === 0
+              ? "Voltou a contar todas as principais da conta."
+              : "Conversão do Google atualizada.",
+          );
       } else {
         setConversoesGoogle(anterior);
         toast.error(r.error);
