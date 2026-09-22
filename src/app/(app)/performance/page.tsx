@@ -3,7 +3,13 @@ import type { Metadata } from "next";
 
 import { PageContainer, PageHeader } from "@/components/layout/page-header";
 import { Sparkline } from "@/components/dashboard/sparkline";
-import { getClients, getMetricsWithComparison } from "@/lib/data";
+import {
+  comparacaoJaBuscada,
+  getClients,
+  metricasDaCarteira,
+} from "@/lib/data";
+import { previousPeriod } from "@/lib/metrics/kpi";
+import { tiposDeConversaoDaCarteira } from "@/lib/ads/conversao-do-cliente";
 import {
   isPeriodPreset,
   periodLabel,
@@ -55,10 +61,35 @@ export default async function PerformancePage({
     segment: segmento,
   });
 
+  /* TUDO ANTES DO LAÇO, e não dentro dele.
+     ---------------------------------------------------------------
+     `getMetricsWithComparison` faz três consultas por cliente: período
+     atual, anterior e tipos de conversão. Dentro do laço isso virava
+     117 idas ao banco com 39 contas. Medido em produção em 22/09/2026:
+     a página custava 227ms sem cliente nenhum e 2.727ms com a carteira
+     inteira — o tempo era o leque, não a página.
+
+     A janela buscada cobre os DOIS períodos de uma vez, porque o
+     anterior é contíguo e imediatamente antes; cada metade é recortada
+     por data aqui embaixo. */
+  const anterior = previousPeriod(start, end);
+  const ids = clients.map((c) => c.id);
+
+  const [metricasPorCliente, tiposPorCliente] = await Promise.all([
+    metricasDaCarteira(ids, anterior.start, end),
+    tiposDeConversaoDaCarteira(),
+  ]);
+
   const rows = (
     await Promise.all(
       clients.map(async (client) => {
-        const metrics = await getMetricsWithComparison(client.id, start, end);
+        const todas = metricasPorCliente.get(client.id) ?? [];
+        const metrics = comparacaoJaBuscada(
+          todas,
+          { start, end },
+          anterior,
+          tiposPorCliente.get(client.id),
+        );
         return {
           client,
           trend: buildTrend(metrics.current),

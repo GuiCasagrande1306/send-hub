@@ -184,6 +184,114 @@ export async function getMetrics(
  * Uma chamada só, porque todo card de KPI precisa da comparação — pedir
  * separado dobraria o número de round-trips da página.
  */
+/* =====================================================================
+   Métricas da carteira inteira, em UMA consulta paginada
+   ---------------------------------------------------------------------
+   `getMetrics` busca um cliente por vez, e quem monta o painel chama
+   dentro de um laço. Medido em produção em 22/09/2026, na /performance
+   com as funções já em São Paulo:
+
+       0 clientes na tela ....  227ms   (só a base da página)
+       2 clientes ...........   271ms
+       39 clientes ..........  2.727ms
+
+   O tempo acompanha o número de clientes porque são três consultas por
+   cliente — período atual, período anterior e tipos de conversão. Com
+   39 contas isso é 117 idas ao banco. O laço é `Promise.all`, então o
+   problema não é a ordem: é a quantidade.
+
+   PAGINA DE PROPÓSITO, e isso não é zelo excessivo. O PostgREST corta a
+   resposta num teto de linhas (1.000 por padrão no Supabase) e NÃO
+   avisa: devolve a página cheia como se fosse o conjunto inteiro. Uma
+   consulta única para a carteira passa desse teto com facilidade —
+   39 contas × 60 dias × campanhas × duas plataformas —, e sem o laço
+   abaixo o painel trocaria lentidão por número errado em silêncio, que
+   é um estrago pior.
+   ===================================================================== */
+
+const PAGINA = 1000;
+
+export async function metricasDaCarteira(
+  clientIds: string[],
+  start: string,
+  end: string,
+): Promise<Map<string, DailyMetric[]>> {
+  const porCliente = new Map<string, DailyMetric[]>();
+  for (const id of clientIds) porCliente.set(id, []);
+
+  if (clientIds.length === 0) return porCliente;
+
+  if (isDemoMode) {
+    const { demoMetrics } = await import("@/lib/mock/data");
+    for (const m of demoMetrics) {
+      if (!porCliente.has(m.client_id)) continue;
+      if (m.metric_date < start || m.metric_date > end) continue;
+      porCliente.get(m.client_id)!.push(m);
+    }
+    return porCliente;
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  for (let offset = 0; ; offset += PAGINA) {
+    const { data, error } = await supabase
+      .from("daily_metrics")
+      .select("*")
+      .in("client_id", clientIds)
+      .gte("metric_date", start)
+      .lte("metric_date", end)
+      /* A ordem é a mesma de `getMetrics` — quem soma não depende dela,
+         mas quem desenha a linha do tempo depende. Ordenar também torna
+         a paginação estável: sem ordem definida, duas páginas podem
+         repetir e omitir a mesma linha. */
+      .order("metric_date")
+      .order("id")
+      .range(offset, offset + PAGINA - 1);
+
+    if (error) throw error;
+
+    const linhas = (data ?? []) as DailyMetric[];
+    for (const m of linhas) porCliente.get(m.client_id)?.push(m);
+
+    if (linhas.length < PAGINA) break;
+  }
+
+  return porCliente;
+}
+
+/**
+ * O mesmo recorte de `getMetricsWithComparison`, sobre linhas JÁ
+ * buscadas — sem tocar no banco.
+ *
+ * Existe para quem busca a carteira inteira de uma vez e depois precisa
+ * dos mesmos totais por cliente. Manter a aritmética aqui, e não na
+ * página, é o que garante que o painel e o PDF continuem somando igual:
+ * `sumMetrics` com os mesmos tipos de conversão, do mesmo jeito.
+ */
+export function comparacaoJaBuscada(
+  linhas: DailyMetric[],
+  periodo: { start: string; end: string },
+  anterior: { start: string; end: string; days: number },
+  tipos: string[] | undefined,
+) {
+  const noIntervalo = (m: DailyMetric, a: string, b: string) =>
+    m.metric_date >= a && m.metric_date <= b;
+
+  const current = linhas.filter((m) => noIntervalo(m, periodo.start, periodo.end));
+  const previous = linhas.filter((m) =>
+    noIntervalo(m, anterior.start, anterior.end),
+  );
+
+  return {
+    current,
+    previous,
+    currentTotals: sumMetrics(current, tipos),
+    previousTotals: sumMetrics(previous, tipos),
+    period: { start: periodo.start, end: periodo.end, days: anterior.days },
+    previousPeriod: anterior,
+  };
+}
+
 export async function getMetricsWithComparison(
   clientId: string,
   start: string,
