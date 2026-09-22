@@ -376,12 +376,22 @@ async function buscarConversoesEscolhidas(
   ids: string[],
 ): Promise<ConversoesPorChave | { ok: false; code: SyncFailureCode; message: string }> {
   const recursos = ids
-    .map((id) => `"customers/${customerId}/conversionActions/${id}"`)
+    .map((id) => `'customers/${customerId}/conversionActions/${id}'`)
     .join(", ");
 
+  /* `segments.conversion_action` PRECISA estar no SELECT, e não só no
+     WHERE. É regra da GAQL: "quando um segmento está na cláusula WHERE,
+     ele também precisa estar na cláusula SELECT", e a exceção são
+     apenas os segmentos de data. Sem ele o Google recusa com
+     "Request contains an invalid argument" — mensagem que não diz qual
+     argumento, e foi assim que isto quebrou em produção em 22/09/2026.
+
+     Selecioná-lo também segmenta a resposta por ação, que é justamente
+     o que o laço abaixo soma por (data, campanha). */
   const query = `
     SELECT
       segments.date,
+      segments.conversion_action,
       campaign.id,
       metrics.all_conversions,
       metrics.all_conversions_value
