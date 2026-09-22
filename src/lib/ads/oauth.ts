@@ -120,6 +120,11 @@ export interface TokenBundle {
  * escolhe QUAL conta de anúncios usar. Por isso ele entra vazio e é
  * preenchido no passo seguinte.
  */
+/** Sete dias — a validade do refresh token de app externo em Teste. */
+function venceEmSeteDias(): string {
+  return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+}
+
 export async function saveIntegrationTokens(input: {
   clientId: string;
   platform: AdPlatform;
@@ -172,8 +177,29 @@ export async function saveIntegrationTokens(input: {
         sync_error: null,
         /* Espelho do vencimento, para a interface avisar antes de
            quebrar sem precisar ler a tabela de segredos — que não tem
-           policy nenhuma de propósito. Ver a migration 41. */
-        token_expires_at: input.tokens.expiresAt,
+           policy nenhuma de propósito. Ver a migration 41.
+
+           O QUE VENCE É DIFERENTE EM CADA PLATAFORMA, e igualar os dois
+           fazia a tela mentir. A Meta devolve `expires_in` do token de
+           longa duração, que é o que de fato vence — espelhar serve.
+           O Google devolve `expires_in` do ACCESS token, que dura uma
+           hora e que este sistema nunca reusa: toda chamada troca o
+           refresh token. Espelhado, o cartão anunciava "a autorização
+           venceu" uma hora depois de autorizar, com a integração
+           funcionando — visto na Biank Imóveis em 22/09/2026.
+
+           O que vence no Google é o REFRESH token, e o prazo vem do
+           status de publicação do app: a documentação do OAuth diz que
+           projeto externo em "Teste" recebe refresh token que expira em
+           SETE DIAS. É o nosso caso hoje.
+
+           ⚠️ Ao publicar o app (status "Em produção"), o refresh token
+           deixa de expirar e esta conta de sete dias passa a avisar sem
+           motivo. Trocar por null nesse dia. */
+        token_expires_at:
+          input.platform === "google_ads"
+            ? venceEmSeteDias()
+            : input.tokens.expiresAt,
       },
       { onConflict: "client_id,platform,external_account_id" },
     )

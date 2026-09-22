@@ -327,8 +327,24 @@ function LinhaIntegracao({
                   {diasParaVencer(status.tokenExpiresAt)}{" "}
                   {diasParaVencer(status.tokenExpiresAt) === 1 ? "dia" : "dias"}
                 </strong>
-                . A renovação automática roda todo dia; se este aviso continuar
-                aqui amanhã, ela não está conseguindo — reautorize na mão.
+                .{" "}
+                {/* O prazo do Google não é instabilidade nossa: é regra
+                    do status de publicação do app. Dizer a causa evita
+                    que alguém procure defeito na integração toda semana
+                    — e aponta para a solução, que é publicar o app. */}
+                {status.platform === "google_ads" ? (
+                  <>
+                    Enquanto o app do Send Hub estiver em modo de teste no
+                    Google, o prazo é sempre de sete dias — publicar o app
+                    acaba com isso.
+                  </>
+                ) : (
+                  <>
+                    A renovação automática roda todo dia; se este aviso
+                    continuar aqui amanhã, ela não está conseguindo —
+                    reautorize na mão.
+                  </>
+                )}
               </>
             )}
           </span>
