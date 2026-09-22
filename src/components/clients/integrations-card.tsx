@@ -7,6 +7,7 @@ import { Check, ExternalLink, Loader2, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GoogleAccountPicker } from "./google-account-picker";
+import { GoogleConversionPicker } from "./google-conversion-picker";
 import { InstagramAutomationStatus } from "./instagram-automation-status";
 import { MetaAccountPicker } from "./meta-account-picker";
 import {
@@ -21,6 +22,7 @@ import {
   setAccountFunds,
   setBillingType,
   setConversionAction,
+  setGoogleConversionActions,
 } from "@/app/(app)/clientes/actions";
 import {
   CONVERSION_ACTION_OPTIONS,
@@ -122,6 +124,15 @@ function LinhaIntegracao({
   const [conta, setConta] = useState(pendente ? "" : (status.externalAccountId ?? ""));
   const [prePaga, setPrePaga] = useState(status.billingType === "prepaid");
   const [conversao, setConversao] = useState(status.conversionActionType ?? PADRAO);
+
+  /* MESMA coluna do banco, vocabulário do Google: ids separados por
+     vírgula. Vazio = total da conta. */
+  const [conversoesGoogle, setConversoesGoogle] = useState<string[]>(() =>
+    (status.conversionActionType ?? "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => /^\d+$/.test(v)),
+  );
   const [fundos, setFundos] = useState(
     status.fundsCents !== null
       ? (status.fundsCents / 100).toFixed(2).replace(".", ",")
@@ -164,6 +175,24 @@ function LinhaIntegracao({
       if (r.ok) toast.success("Conversão atualizada.");
       else {
         setConversao(status.conversionActionType ?? PADRAO);
+        toast.error(r.error);
+      }
+    });
+  }
+
+  function salvarConversoesGoogle(ids: string[]) {
+    const anterior = conversoesGoogle;
+    setConversoesGoogle(ids);
+    startTransition(async () => {
+      const r = await setGoogleConversionActions({ clientId, actionIds: ids });
+      if (r.ok) {
+        toast.success(
+          ids.length === 0
+            ? "Voltou a contar todas as principais da conta."
+            : "Conversão do Google atualizada.",
+        );
+      } else {
+        setConversoesGoogle(anterior);
         toast.error(r.error);
       }
     });
@@ -397,8 +426,43 @@ function LinhaIntegracao({
             </div>
           )}
 
-          {/* Só Meta: no Google a conversão é definida na própria conta,
-              e o provider lê o que vier de lá. */}
+          {/* No Google a lista de ações vem da CONTA, então não cabe um
+              `Select` de opções fixas como o da Meta — e a escolha é
+              múltipla, porque uma conta conta formulário E ligação. */}
+          {status.platform === "google_ads" && vinculado && (
+            <div className="mt-3 border-t border-hairline pt-3">
+              <label className="text-2xs text-muted-foreground">
+                O que conta como conversão
+              </label>
+              <div className="mt-1">
+                <GoogleConversionPicker
+                  clientId={clientId}
+                  value={conversoesGoogle}
+                  onChange={salvarConversoesGoogle}
+                  disabled={salvando}
+                />
+              </div>
+              <p className="mt-1.5 text-2xs text-muted-foreground">
+                {conversoesGoogle.length === 0 ? (
+                  <>
+                    Sem escolha, conta o que a conta marcou como{" "}
+                    <strong>principal</strong> — que é a configuração feita
+                    para o Google otimizar o lance, e costuma incluir
+                    visita de página. Escolher aqui não mexe nas campanhas.
+                  </>
+                ) : (
+                  <>
+                    O relatório conta só estas ações. As campanhas
+                    continuam sendo otimizadas pelas principais da conta —
+                    isto aqui não mexe no lance.
+                  </>
+                )}
+              </p>
+            </div>
+          )}
+
+          {/* Só Meta: a lista de eventos do pixel é a mesma em qualquer
+              conta, então aqui cabem opções fixas. */}
           {status.platform === "meta_ads" && (
             <div className="mt-3 border-t border-hairline pt-3">
               <label className="text-2xs text-muted-foreground">

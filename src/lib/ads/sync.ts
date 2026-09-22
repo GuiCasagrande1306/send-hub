@@ -193,10 +193,20 @@ async function syncIntegration(
          conta de e-commerce — zerando conversão e receita com cara de
          mês fraco. O segmento resolve o caso comum; a coluna existe
          para o pixel fora do padrão. */
-      conversionActionType: conversionActionFor(
-        integration.clients?.segment,
-        integration.conversion_action_type,
-      ),
+      /* MESMA coluna, vocabulário de cada plataforma. Na Meta o valor é
+         action_type do pixel, e quando ninguém escolheu vale o padrão
+         do segmento. No Google são ids de ação de conversão, e
+         "ninguém escolheu" significa usar o total da conta — que é o
+         que `metrics.conversions` já devolve. Passar o padrão da Meta
+         para o Google mandaria `offsite_conversion...` a um provider
+         que espera número, e ele ignoraria em silêncio. */
+      conversionActionType:
+        integration.platform === "google_ads"
+          ? integration.conversion_action_type
+          : conversionActionFor(
+              integration.clients?.segment,
+              integration.conversion_action_type,
+            ),
       since: period.since,
       until: period.until,
     });

@@ -800,6 +800,57 @@ export async function setConversionAction(input: {
 }
 
 /**
+ * Escolhe quais ações de conversão do Google contam como resultado.
+ *
+ * Lista vazia volta ao comportamento do Google: `metrics.conversions`,
+ * que soma todas as ações marcadas como PRINCIPAIS na conta. Isso não é
+ * um padrão neutro — é a configuração feita para o Google otimizar, e
+ * ela costuma incluir micro-conversão. Medido na Biank Imóveis em
+ * 21/09/2026: 3.203 "conversões" para R$ 242,81, porque "Visualização de
+ * página" era principal. O painel mostrou 3.289 leads onde havia 86.
+ *
+ * Escolher aqui NÃO mexe na conta do Google: o lance continua sendo
+ * disputado pelas principais que a mídia definiu. Só o relatório passa a
+ * contar o que o cliente entende por resultado.
+ *
+ * Guarda na MESMA coluna que a Meta usa (`conversion_action_type`), no
+ * vocabulário do Google: ids separados por vírgula.
+ */
+export async function setGoogleConversionActions(input: {
+  clientId: string;
+  /** Lista vazia = voltar ao total da conta. */
+  actionIds: string[];
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  /* Só dígitos. O id vem de uma lista que o próprio sistema buscou, e
+     barrar o resto impede que um rótulo colado por engano vire um
+     filtro que não casa com nada — o que apareceria como "0 conversões"
+     semanas depois, com cara de campanha ruim. */
+  const ids = [...new Set(input.actionIds.map((s) => s.trim()))].filter((s) =>
+    /^\d{1,20}$/.test(s),
+  );
+
+  if (ids.length !== input.actionIds.length) {
+    return { ok: false, error: "Ação de conversão inválida." };
+  }
+
+  if (isDemoMode) return { ok: true };
+
+  const supabase = await createSupabaseServerClient();
+
+  const { error } = await supabase
+    .from("client_integrations")
+    .update({ conversion_action_type: ids.length ? ids.join(",") : null })
+    .eq("client_id", input.clientId)
+    .eq("platform", "google_ads");
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/clientes");
+  revalidatePath("/");
+  return { ok: true };
+}
+
+/**
  * Registra o saldo disponível lido no painel da plataforma.
  *
  * A Graph API não entrega a carteira — `balance` é o acumulado a pagar,

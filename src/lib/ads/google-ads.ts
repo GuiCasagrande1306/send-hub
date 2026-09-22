@@ -8,7 +8,12 @@ import {
   toDecimal,
   toInt,
 } from "./normalize";
-import type { AdsProvider, NormalizedMetricRow, ProviderResult } from "./types";
+import type {
+  AdsProvider,
+  NormalizedMetricRow,
+  ProviderResult,
+  SyncFailureCode,
+} from "./types";
 
 /* =====================================================================
    Google Ads — searchStream (API v21)
@@ -84,6 +89,9 @@ interface GoogleAdsRow {
     clicks?: string;
     conversions?: number;
     conversionsValue?: number;
+    /* Só vêm na consulta filtrada por `segments.conversion_action`. */
+    allConversions?: number;
+    allConversionsValue?: number;
   };
 }
 
@@ -138,6 +146,7 @@ export const googleAdsProvider: AdsProvider = {
        diária. */
     const janelas = chunkDatesByMonth(request.since, request.until);
     const rows: NormalizedMetricRow[] = [];
+    const escolhidas = idsDeConversao(request.conversionActionType);
 
     for (const [i, janela] of janelas.entries()) {
       /* Meio segundo entre chamadas. O limite do Google é por segundo, e
@@ -157,7 +166,38 @@ export const googleAdsProvider: AdsProvider = {
          investimento onde houve só falha de rede. */
       if (!parcial.ok) return parcial;
 
-      rows.push(...parcial.rows);
+      if (escolhidas.length === 0) {
+        rows.push(...parcial.rows);
+        continue;
+      }
+
+      const soAsEscolhidas = await buscarConversoesEscolhidas(
+        customerId,
+        token.accessToken,
+        janela.since,
+        janela.until,
+        escolhidas,
+      );
+
+      /* Recusar em vez de cair no total é deliberado. O motivo de
+         existir a escolha é que o total está errado; entregar o total
+         quando a segunda consulta falha devolveria justamente o número
+         que se quis evitar, sem aviso nenhum. */
+      if (!soAsEscolhidas.ok) return soAsEscolhidas;
+
+      for (const row of parcial.rows) {
+        const medido = soAsEscolhidas.porChave.get(
+          `${row.metricDate}|${row.campaignId}`,
+        );
+        rows.push({
+          ...row,
+          /* Ausente = a campanha não produziu NENHUMA das ações
+             escolhidas na data. Zero é a resposta certa: manter o valor
+             do total traria de volta as conversões descartadas. */
+          conversions: medido?.conversions ?? 0,
+          revenueCents: medido?.revenueCents ?? 0,
+        });
+      }
     }
 
     return { ok: true, rows };
@@ -287,6 +327,142 @@ async function buscarJanela(
   }
 }
 
+
+/* =====================================================================
+   Quais ações de conversão contam
+   ---------------------------------------------------------------------
+   `metrics.conversions` soma TODAS as ações marcadas como principais na
+   conta, e "principal" é escolha de quem configura a conta para o
+   Google otimizar — não do relatório. Medido na Biank Imóveis em
+   21/09/2026: R$ 242,81 de investimento e 3.203 conversões, porque
+   "Visualização de página" estava como principal ao lado de Engajamento
+   e Ver rota. O painel mostrou 3.289 leads onde havia 86.
+
+   Quando o cliente tem ações escolhidas, a contagem vem de uma segunda
+   consulta, filtrada por elas.
+
+   POR QUE UMA SEGUNDA CONSULTA, E NÃO UM CAMPO A MAIS NA PRIMEIRA:
+   `segments.conversion_action` SEGMENTA a resposta. Com ele, uma
+   campanha que teve três tipos de conversão no dia vira três linhas — e
+   `metrics.cost_micros` vem REPETIDO INTEIRO em cada uma. Somar daria o
+   triplo do investimento real. Custo e cliques continuam vindo da
+   consulta sem segmento; daqui vem só a conversão.
+
+   `all_conversions`, e não `conversions`: quem escolhe aqui pode querer
+   justamente uma ação que NÃO é principal na conta — e para essas
+   `metrics.conversions` devolve zero, o que pareceria "a escolha não
+   funcionou".
+   ===================================================================== */
+
+/** IDs numéricos guardados em `conversion_action_type` do cliente. */
+export function idsDeConversao(
+  bruto: string | string[] | null | undefined,
+): string[] {
+  const lista = Array.isArray(bruto) ? bruto : (bruto ?? "").split(",");
+  return [...new Set(lista.map((s) => s.trim()).filter((s) => /^\d+$/.test(s)))];
+}
+
+interface ConversoesPorChave {
+  ok: true;
+  /** `YYYY-MM-DD|campaignId` → o que as ações escolhidas produziram. */
+  porChave: Map<string, { conversions: number; revenueCents: number }>;
+}
+
+async function buscarConversoesEscolhidas(
+  customerId: string,
+  accessToken: string,
+  since: string,
+  until: string,
+  ids: string[],
+): Promise<ConversoesPorChave | { ok: false; code: SyncFailureCode; message: string }> {
+  const recursos = ids
+    .map((id) => `"customers/${customerId}/conversionActions/${id}"`)
+    .join(", ");
+
+  const query = `
+    SELECT
+      segments.date,
+      campaign.id,
+      metrics.all_conversions,
+      metrics.all_conversions_value
+    FROM campaign
+    WHERE segments.date BETWEEN '${since}' AND '${until}'
+      AND campaign.status != 'REMOVED'
+      AND segments.conversion_action IN (${recursos})
+  `;
+
+  try {
+    const response = await fetch(
+      `https://googleads.googleapis.com/${API_VERSION}/customers/${customerId}/googleAds:searchStream`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          ...(serverEnv.googleAdsLoginCustomerId
+            ? {
+                "login-customer-id": normalizeCustomerId(
+                  serverEnv.googleAdsLoginCustomerId,
+                ),
+              }
+            : {}),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query }),
+        signal: AbortSignal.timeout(45_000),
+        cache: "no-store",
+      },
+    );
+
+    const payload = (await response.json()) as
+      | SearchStreamChunk[]
+      | SearchStreamChunk;
+
+    if (!response.ok) {
+      const error = Array.isArray(payload) ? payload[0]?.error : payload.error;
+      return {
+        ok: false,
+        code:
+          response.status === 401 || response.status === 403
+            ? "auth_expired"
+            : response.status === 429
+              ? "rate_limited"
+              : "platform_error",
+        message: `${error?.message ?? `Google Ads respondeu ${response.status}.`} (conversões escolhidas, ${since} a ${until})`,
+      };
+    }
+
+    const porChave = new Map<
+      string,
+      { conversions: number; revenueCents: number }
+    >();
+
+    for (const chunk of Array.isArray(payload) ? payload : [payload]) {
+      for (const row of chunk.results ?? []) {
+        const chave = `${row.segments?.date ?? ""}|${row.campaign?.id ?? "_all"}`;
+        const atual = porChave.get(chave) ?? { conversions: 0, revenueCents: 0 };
+
+        /* SOMA, não atribui: uma campanha com duas ações escolhidas
+           volta em duas linhas no mesmo dia. */
+        atual.conversions += toDecimal(row.metrics?.allConversions);
+        atual.revenueCents += Math.round(
+          (row.metrics?.allConversionsValue ?? 0) * 100,
+        );
+        porChave.set(chave, atual);
+      }
+    }
+
+    return { ok: true, porChave };
+  } catch (error) {
+    return {
+      ok: false,
+      code: "network_error",
+      message:
+        error instanceof Error
+          ? error.message
+          : "Falha de rede ao buscar as conversões escolhidas.",
+    };
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /* OAuth                                                               */
